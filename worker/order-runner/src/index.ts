@@ -250,15 +250,21 @@ async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerRep
 }
 
 async function runOnce() {
-  const snapshot = await database.ref(queuePath).orderByChild("status").equalTo("QUEUED").limitToFirst(10).get();
-  if (!snapshot.exists()) {
+  // orderByKey needs no ".indexOn" rule; filter QUEUED jobs on the client side.
+  const recent = await database.ref(queuePath).orderByKey().limitToLast(100).get();
+  const queuedIds: string[] = [];
+  recent.forEach((child) => {
+    if ((child.val() as { status?: string } | null)?.status === "QUEUED") queuedIds.push(child.key as string);
+    return false;
+  });
+  if (queuedIds.length === 0) {
     console.log("Queue empty");
     return;
   }
 
   const browser = await chromium.launch({ headless: true });
   try {
-    for (const jobId of Object.keys((snapshot.val() ?? {}) as Record<string, unknown>)) {
+    for (const jobId of queuedIds.slice(0, 10)) {
       const job = await claimJob(jobId);
       if (!job) continue;
       try {
