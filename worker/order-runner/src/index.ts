@@ -10,6 +10,7 @@ type OrderRow = {
   sourceSystem?: string;
   orderId?: string;
   productName?: string;
+  option?: string;
   quantity?: string | number;
   expectedPrice?: string | number;
   recipientName?: string;
@@ -105,6 +106,68 @@ async function claimJob(jobId: string): Promise<OrderJob | null> {
   return claimed;
 }
 
+const colorAliases: Record<string, string[]> = {
+  회색: ["회색", "그레이", "grey", "gray"],
+  초록: ["초록", "그린", "녹색", "green"],
+  블랙: ["블랙", "검정", "검은색", "black"],
+  블루: ["블루", "파랑", "파란색", "blue"],
+  레드: ["레드", "빨강", "빨간색", "red"],
+  와인: ["와인", "wine"],
+};
+
+function canonicalColor(value: string): string {
+  const text = value.trim().toLowerCase();
+  for (const [canonical, aliases] of Object.entries(colorAliases)) {
+    if (aliases.some((alias) => text.includes(alias.toLowerCase()))) return canonical;
+  }
+  return text;
+}
+
+// Option comes from the sheet's option/color column; fall back to a color written in the product name,
+// e.g. "DA-006(초록)" or "미끄럼방지매트리스 DA-006 / 회색".
+function resolveWantedOption(row: OrderRow): string {
+  const explicit = (row.option ?? "").trim();
+  if (explicit) return explicit;
+  const name = row.productName ?? "";
+  const paren = name.match(/\(([^)]+)\)/);
+  if (paren) return paren[1].trim();
+  const slash = name.split("/");
+  if (slash.length > 1) return slash[slash.length - 1].trim();
+  return "";
+}
+
+type OptionPick = { ok: true; label: string; stock: number | null } | { ok: false; reason: string };
+
+async function selectEroumOption(page: Page, wanted: string, quantity: number): Promise<OptionPick> {
+  const target = canonicalColor(wanted);
+  const selects = page.locator('select[name^="it_option_"]:visible, select.it_option:visible');
+  const selectCount = await selects.count();
+  if (selectCount === 0) {
+    return { ok: false, reason: "이로움 상품 페이지에서 옵션 선택 목록을 찾지 못했습니다." };
+  }
+  const select = selects.first();
+  const options = await select.locator("option").evaluateAll((nodes) =>
+    nodes.map((node) => ({ value: (node as HTMLOptionElement).value, text: (node.textContent ?? "").replace(/\s+/g, " ").trim(), disabled: (node as HTMLOptionElement).disabled })),
+  );
+  const candidates = options.filter((option) => option.value !== "");
+  const match = candidates.find((option) => canonicalColor(option.text) === target) ?? candidates.find((option) => canonicalColor(option.text).includes(target) || option.text.includes(wanted));
+  if (!match) {
+    const available = candidates.map((option) => option.text.slice(0, 30)).slice(0, 8).join(" | ");
+    return { ok: false, reason: `이로움에서 옵션 "${wanted}"을(를) 찾지 못했습니다. 선택 가능한 옵션: ${available || "없음"}` };
+  }
+  if (match.disabled || /품절|일시품절/.test(match.text)) {
+    return { ok: false, reason: `옵션 "${match.text}"은(는) 품절 상태입니다.` };
+  }
+  const stockMatch = match.text.match(/재고[^0-9]{0,8}(\d+)/);
+  const stock = stockMatch ? Number(stockMatch[1]) : null;
+  if (stock !== null && quantity > stock) {
+    return { ok: false, reason: `옵션 "${match.text}" 재고 ${stock}개보다 주문수량 ${quantity}개가 많습니다.` };
+  }
+  // selectOption fires real input/change events, which the shop's jQuery handler needs to add the option row.
+  await select.selectOption({ value: match.value });
+  return { ok: true, label: match.text, stock };
+}
+
 function parsePositiveInteger(value: string | number | undefined): number | null {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -138,8 +201,9 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
 
   const mapping = findProductMapping(row.productName);
   if (!mapping) return { lineNo, status: "HOLD", reason: "이로움 상품 코드 매핑을 찾지 못했습니다." };
-  if (mapping.option === "COLOR_REQUIRED") {
-    return { lineNo, status: "HOLD", reason: "DA-006은 색상 옵션(회색/초록) 자동 선택 검증이 아직 필요합니다.", productId: mapping.productId };
+  const wantedOption = mapping.option === "COLOR_REQUIRED" ? resolveWantedOption(row) : "";
+  if (mapping.option === "COLOR_REQUIRED" && !wantedOption) {
+    return { lineNo, status: "HOLD", reason: "색상(옵션) 값이 없습니다. 주문 파일에 option(색상) 열을 넣어 주세요.", productId: mapping.productId };
   }
 
   const quantity = parsePositiveInteger(row.quantity);
@@ -166,6 +230,13 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
     return { lineNo, status: "HOLD", reason: `예상 단가 ${expectedPrice.toLocaleString()}원과 이로움 단가 ${unitPrice.toLocaleString()}원이 다릅니다.`, productId: mapping.productId, unitPrice, quantity };
   }
 
+  let optionLabel: string | undefined;
+  if (wantedOption) {
+    const picked = await selectEroumOption(page, wantedOption, quantity);
+    if (!picked.ok) return { lineNo, status: "HOLD", reason: picked.reason, productId: mapping.productId, quantity };
+    optionLabel = picked.label;
+    await page.locator(`input[name="ct_qty[${mapping.productId}][]"]:visible`).first().waitFor({ state: "visible", timeout: 10_000 });
+  }
   await page.locator(`input[name="ct_qty[${mapping.productId}][]"]:visible`).first().fill(String(quantity));
   await page.locator('input[type="submit"][value="상품주문"]:visible').first().click();
   await page.waitForURL("**/simple_order.php**", { timeout: 30_000 });
@@ -187,7 +258,7 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
   return {
     lineNo,
     status: "READY",
-    reason: "상품·수량·재고·배송지 입력 검증 완료. 최종 주문은 제출하지 않았습니다.",
+    reason: optionLabel ? `상품·옵션(${optionLabel})·수량·재고·배송지 입력 검증 완료. 최종 주문은 제출하지 않았습니다.` : "상품·수량·재고·배송지 입력 검증 완료. 최종 주문은 제출하지 않았습니다.",
     productId: mapping.productId,
     unitPrice,
     quantity,

@@ -46,6 +46,7 @@ type OrderRow = {
   orderId: string;
   category: string;
   productName: string;
+  option: string;
   quantity: string;
   expectedPrice: string;
   customerName: string;
@@ -294,6 +295,7 @@ function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
     orderId: cell(raw, "order_id"),
     category,
     productName: cell(raw, "product_name"),
+    option: cell(raw, "option") || cell(raw, "color") || cell(raw, "색상") || cell(raw, "옵션"),
     quantity,
     expectedPrice,
     customerName: cell(raw, "customer_name"),
@@ -342,6 +344,7 @@ function downloadCsv(rows: OrderRow[], filename: string) {
     "reason",
     "category",
     "product_name",
+    "option",
     "quantity",
     "expected_price",
     "customer_name",
@@ -361,6 +364,7 @@ function downloadCsv(rows: OrderRow[], filename: string) {
       row.reason,
       row.category,
       row.productName,
+      row.option,
       row.quantity,
       row.expectedPrice,
       row.customerName,
@@ -1804,6 +1808,7 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
               <TableCell>{row.orderId || "-"}</TableCell>
               <TableCell className="max-w-[220px] whitespace-normal font-medium">
                 {row.productName || "-"}
+                {row.option ? <div className="text-xs font-normal text-slate-700">옵션: {row.option}</div> : null}
                 <div className="text-xs font-normal text-slate-500">{row.category}</div>
               </TableCell>
               <TableCell>{row.quantity || "-"}</TableCell>
