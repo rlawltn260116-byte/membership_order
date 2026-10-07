@@ -240,7 +240,7 @@ function bannerAppliesToOption(note: ShippingNote, wantedOption: string): boolea
     .some((token) => canonicalColor(token) === wanted || token.includes(wantedOption) || wantedOption.includes(token));
 }
 
-type OptionPick = { ok: true; label: string } | { ok: false; reason: string };
+type OptionPick = { ok: true; label: string; tags: string[] } | { ok: false; reason: string };
 
 async function selectEroumOption(page: Page, wanted: string): Promise<OptionPick> {
   const target = canonicalColor(wanted);
@@ -253,8 +253,10 @@ async function selectEroumOption(page: Page, wanted: string): Promise<OptionPick
   const options = await select.locator("option").evaluateAll((nodes) =>
     nodes.map((node) => ({ value: (node as HTMLOptionElement).value, text: (node.textContent ?? "").replace(/\s+/g, " ").trim(), disabled: (node as HTMLOptionElement).disabled })),
   );
-  const candidates = options.filter((option) => option.value !== "");
-  const match = candidates.find((option) => canonicalColor(option.text) === target) ?? candidates.find((option) => canonicalColor(option.text).includes(target) || option.text.includes(wanted));
+  const candidates = options
+    .filter((option) => option.value !== "")
+    .map((option) => ({ ...option, text: option.text, plain: normalizeSpaces(option.text.replace(/\[[^\]]*\]/g, "")) }));
+  const match = candidates.find((option) => canonicalColor(option.plain) === target) ?? candidates.find((option) => canonicalColor(option.plain).includes(target) || option.plain.includes(wanted));
   if (!match) {
     const available = candidates.map((option) => option.text.slice(0, 30)).slice(0, 8).join(" | ");
     return { ok: false, reason: `이로움에서 옵션 "${wanted}"을(를) 찾지 못했습니다. 선택 가능한 옵션: ${available || "없음"}` };
@@ -275,7 +277,8 @@ async function selectEroumOption(page: Page, wanted: string): Promise<OptionPick
     // Fallback: call the shop's own function so the option row (and quantity input) is created.
     await page.evaluate(() => (window as unknown as { sel_option_process?: (add: boolean) => void }).sel_option_process?.(true));
   }
-  return { ok: true, label: match.text };
+  const tags = Array.from(match.text.matchAll(/\[([^\]]+)\]/g), (m) => normalizeSpaces(m[1]));
+  return { ok: true, label: normalizeSpaces(match.text.replace(/\[[^\]]*\]/g, "")), tags };
 }
 
 function parsePositiveInteger(value: string | number | undefined): number | null {
@@ -334,11 +337,13 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
   }
 
   let optionLabel: string | undefined;
+  let optionTagNotes: ShippingNote[] = [];
   // Prefer the product summary block over the whole page so menus/filters don't create false shipping notices.
   if (wantedOption) {
     const picked = await selectEroumOption(page, wantedOption);
     if (!picked.ok) return { lineNo, status: "HOLD", reason: picked.reason, productId: mapping.productId, quantity };
     optionLabel = picked.label;
+    optionTagNotes = picked.tags.filter((tag) => badgeExact.test(tag)).map((tag) => ({ target: picked.label, status: tag }));
     await page.locator(`input[name="ct_qty[${mapping.productId}][]"]:visible`).first().waitFor({ state: "visible", timeout: 10_000 });
   }
   const productShippingNotes = await readProductShippingNotes(page);
@@ -357,7 +362,7 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
   const formValid = await page.locator("#simple_order").evaluate((form) => (form as HTMLFormElement).checkValidity());
   if (!formValid) return { lineNo, status: "HOLD", reason: "이로움 주문서 필수 입력값 검증을 통과하지 못했습니다.", productId: mapping.productId, unitPrice, quantity, orderFormUrl: page.url() };
   const orderPageText = await page.locator("body").innerText();
-  const shippingNotes = [...productShippingNotes, ...detectShippingNotes([orderPageText])]
+  const shippingNotes = [...productShippingNotes, ...optionTagNotes, ...detectShippingNotes([orderPageText])]
     .filter((note) => bannerAppliesToOption(note, wantedOption))
     .map(formatShippingNote);
 
