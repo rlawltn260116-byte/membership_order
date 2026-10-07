@@ -220,8 +220,19 @@ async function selectEroumOption(page: Page, wanted: string): Promise<OptionPick
   if (match.disabled) {
     return { ok: false, reason: `옵션 "${match.text}"은(는) 선택할 수 없는 상태입니다.` };
   }
-  // selectOption fires real input/change events, which the shop's jQuery handler needs to add the option row.
+  // Eroum only adds the option row when the select saw a mouseup first (option_add flag), which selectOption never fires.
+  await select.dispatchEvent("mouseup");
   await select.selectOption({ value: match.value });
+  const rowAdded = await page
+    .locator("li.it_opt_list")
+    .first()
+    .waitFor({ state: "attached", timeout: 3_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!rowAdded) {
+    // Fallback: call the shop's own function so the option row (and quantity input) is created.
+    await page.evaluate(() => (window as unknown as { sel_option_process?: (add: boolean) => void }).sel_option_process?.(true));
+  }
   return { ok: true, label: match.text };
 }
 
