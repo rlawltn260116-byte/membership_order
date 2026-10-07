@@ -86,7 +86,16 @@ type Job = {
     holdRows: number;
     reviewState: "WAITING_FOR_DASHBOARD" | "BLOCKED";
     canSubmit: false;
-    details: Array<{ lineNo: number; status: "FAILED" | "HOLD"; reason: string }>;
+    details: Array<{
+      lineNo: number;
+      status: "READY" | "FAILED" | "HOLD";
+      reason: string;
+      productId?: string;
+      unitPrice?: number;
+      quantity?: number;
+      shippingFee?: number;
+      totalPrice?: number;
+    }>;
   };
   dashboardReview?: {
     state: "WAITING_FOR_DASHBOARD" | "BLOCKED" | "ACCEPTED" | "ON_HOLD";
