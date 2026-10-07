@@ -85,6 +85,7 @@ type Job = {
     successRows: number;
     failedRows: number;
     holdRows: number;
+    shippingNoticeRows?: number;
     reviewState: "WAITING_FOR_DASHBOARD" | "BLOCKED";
     canSubmit: false;
     details: Array<{
@@ -96,6 +97,7 @@ type Job = {
       quantity?: number;
       shippingFee?: number;
       totalPrice?: number;
+      shippingNotes?: string[];
     }>;
   };
   dashboardReview?: {
@@ -1052,15 +1054,58 @@ function WorkerReviewPanel({
   const report = job.report;
   const review = job.dashboardReview;
   const alreadyReviewed = review?.state === "ACCEPTED" || review?.state === "ON_HOLD";
+  const shippingRows = report.details
+    .filter((detail) => (detail.shippingNotes?.length ?? 0) > 0)
+    .map((detail) => ({ detail, row: job.rows?.find((candidate) => candidate.lineNo === detail.lineNo) }));
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <OverviewCard label="총 주문 행" value={report.totalRows} />
         <OverviewCard label="준비 성공" value={report.successRows} />
         <OverviewCard label="실패" value={report.failedRows} />
         <OverviewCard label="보류" value={report.holdRows} />
+        <OverviewCard label="출고 확인 필요" value={shippingRows.length} />
       </div>
+      {shippingRows.length ? (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <h3 className="font-semibold text-amber-900">출고 확인 필요 {shippingRows.length}건</h3>
+          <p className="mt-1 text-sm text-amber-900/80">이로움 상품 화면에 출고지연·출고 예정일·일정 확인 중 같은 안내가 있는 주문입니다. 주문 준비는 끝났지만 납기를 확인하세요.</p>
+          <div className="mt-3 overflow-hidden rounded-md border border-amber-200 bg-white">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-16">행</TableHead>
+                  <TableHead>주문번호</TableHead>
+                  <TableHead>상품 / 옵션</TableHead>
+                  <TableHead>수취인</TableHead>
+                  <TableHead>출고 안내</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {shippingRows.map(({ detail, row }) => (
+                  <TableRow key={`ship-${detail.lineNo}`}>
+                    <TableCell>{detail.lineNo}</TableCell>
+                    <TableCell>{row?.orderId || "-"}</TableCell>
+                    <TableCell className="whitespace-normal">
+                      {row?.productName || "-"}
+                      {row?.option ? <div className="text-xs text-slate-600">옵션: {row.option}</div> : null}
+                    </TableCell>
+                    <TableCell>{row?.recipientName || "-"}</TableCell>
+                    <TableCell className="whitespace-normal">
+                      <div className="flex flex-wrap gap-1">
+                        {(detail.shippingNotes ?? []).map((note) => (
+                          <Badge key={note} className="border-amber-300 bg-amber-100 text-amber-900">{note}</Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      ) : null}
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>

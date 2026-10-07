@@ -35,6 +35,7 @@ type WorkerDetail = {
   shippingFee?: number;
   totalPrice?: number;
   orderFormUrl?: string;
+  shippingNotes?: string[];
 };
 
 type WorkerReport = {
@@ -45,6 +46,7 @@ type WorkerReport = {
   successRows: number;
   failedRows: number;
   holdRows: number;
+  shippingNoticeRows: number;
   reviewState: "WAITING_FOR_DASHBOARD" | "BLOCKED";
   canSubmit: false;
   details: WorkerDetail[];
@@ -136,9 +138,38 @@ function resolveWantedOption(row: OrderRow): string {
   return "";
 }
 
-type OptionPick = { ok: true; label: string; stock: number | null } | { ok: false; reason: string };
+// Eroum has no real inventory (the "My 보유 재고" figure is the buyer's own past orders), so stock is never a
+// reason to hold. What matters is shipping status: delays, scheduled dates, schedule pending, sold-out notices.
+const shippingPatterns: RegExp[] = [
+  /출고\s*지연/,
+  /\d{1,2}\s*[\/.월]\s*\d{1,2}\s*일?\s*(?:\([^)]*\))?\s*출고\s*(?:예정|가능)/,
+  /출고\s*(?:예정|일정)\s*(?:일\s*)?(?:확인|미정)/,
+  /(?:출고|배송)\s*일정\s*확인\s*중/,
+  /입고\s*(?:예정|지연)/,
+  /일시\s*품절|품절|예약\s*가능/,
+];
 
-async function selectEroumOption(page: Page, wanted: string, quantity: number): Promise<OptionPick> {
+function detectShippingNotes(...sources: string[]): string[] {
+  const notes: string[] = [];
+  for (const source of sources) {
+    const lines = source.split(/\r?\n/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
+    for (let i = 0; i < lines.length; i += 1) {
+      // Join with the next line: the label and the date are often on separate lines.
+      const windowText = lines[i].length > 120 ? lines[i] : `${lines[i]} ${lines[i + 1] ?? ""}`.trim();
+      if (windowText.length > 160) continue;
+      for (const pattern of shippingPatterns) {
+        const found = windowText.match(pattern)?.[0]?.replace(/\s+/g, " ").trim();
+        if (found && !notes.includes(found)) notes.push(found);
+      }
+      if (notes.length >= 6) return notes.slice(0, 6);
+    }
+  }
+  return notes;
+}
+
+type OptionPick = { ok: true; label: string } | { ok: false; reason: string };
+
+async function selectEroumOption(page: Page, wanted: string): Promise<OptionPick> {
   const target = canonicalColor(wanted);
   const selects = page.locator('select[name^="it_option_"]:visible, select.it_option:visible');
   const selectCount = await selects.count();
@@ -155,17 +186,12 @@ async function selectEroumOption(page: Page, wanted: string, quantity: number): 
     const available = candidates.map((option) => option.text.slice(0, 30)).slice(0, 8).join(" | ");
     return { ok: false, reason: `이로움에서 옵션 "${wanted}"을(를) 찾지 못했습니다. 선택 가능한 옵션: ${available || "없음"}` };
   }
-  if (match.disabled || /품절|일시품절/.test(match.text)) {
-    return { ok: false, reason: `옵션 "${match.text}"은(는) 품절 상태입니다.` };
-  }
-  const stockMatch = match.text.match(/재고[^0-9]{0,8}(\d+)/);
-  const stock = stockMatch ? Number(stockMatch[1]) : null;
-  if (stock !== null && quantity > stock) {
-    return { ok: false, reason: `옵션 "${match.text}" 재고 ${stock}개보다 주문수량 ${quantity}개가 많습니다.` };
+  if (match.disabled) {
+    return { ok: false, reason: `옵션 "${match.text}"은(는) 선택할 수 없는 상태입니다.` };
   }
   // selectOption fires real input/change events, which the shop's jQuery handler needs to add the option row.
   await select.selectOption({ value: match.value });
-  return { ok: true, label: match.text, stock };
+  return { ok: true, label: match.text };
 }
 
 function parsePositiveInteger(value: string | number | undefined): number | null {
@@ -217,13 +243,6 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
     return { lineNo, status: "HOLD", reason: "이로움 로그인 세션이 만료되었습니다.", productId: mapping.productId };
   }
 
-  const bodyText = await page.locator("body").innerText();
-  const inventoryMatch = bodyText.match(/My\s*보유\s*재고[\s\S]{0,80}?(\d+)개/);
-  const availableInventory = inventoryMatch ? Number(inventoryMatch[1]) : null;
-  if (availableInventory !== null && quantity > availableInventory) {
-    return { lineNo, status: "HOLD", reason: `보유 재고 ${availableInventory}개보다 주문수량 ${quantity}개가 많습니다.`, productId: mapping.productId, quantity };
-  }
-
   const unitPrice = Number(await page.locator("#it_price").inputValue());
   const expectedPrice = parseOptionalPrice(row.expectedPrice);
   if (expectedPrice !== null && expectedPrice !== unitPrice) {
@@ -231,12 +250,21 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
   }
 
   let optionLabel: string | undefined;
+  // Prefer the product summary block over the whole page so menus/filters don't create false shipping notices.
+  const productText = async () => {
+    for (const selector of ["#sit_ov_wrap", ".sit_ov_wrap", "#sit_ov", ".sit_ov", "#sit_hd"]) {
+      const locator = page.locator(selector).first();
+      if (await locator.count()) return locator.innerText();
+    }
+    return page.locator("body").innerText();
+  };
   if (wantedOption) {
-    const picked = await selectEroumOption(page, wantedOption, quantity);
+    const picked = await selectEroumOption(page, wantedOption);
     if (!picked.ok) return { lineNo, status: "HOLD", reason: picked.reason, productId: mapping.productId, quantity };
     optionLabel = picked.label;
     await page.locator(`input[name="ct_qty[${mapping.productId}][]"]:visible`).first().waitFor({ state: "visible", timeout: 10_000 });
   }
+  const itemPageText = await productText();
   await page.locator(`input[name="ct_qty[${mapping.productId}][]"]:visible`).first().fill(String(quantity));
   await page.locator('input[type="submit"][value="상품주문"]:visible').first().click();
   await page.waitForURL("**/simple_order.php**", { timeout: 30_000 });
@@ -250,21 +278,22 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
   await page.locator("#od_memo").fill(row.memo || row.orderId || "");
 
   const formValid = await page.locator("#simple_order").evaluate((form) => (form as HTMLFormElement).checkValidity());
-  const stockStatus = await page.locator('input[name="stock_status[]"]').inputValue();
   if (!formValid) return { lineNo, status: "HOLD", reason: "이로움 주문서 필수 입력값 검증을 통과하지 못했습니다.", productId: mapping.productId, unitPrice, quantity, orderFormUrl: page.url() };
-  if (stockStatus !== "normal") return { lineNo, status: "HOLD", reason: `이로움 재고 상태가 ${stockStatus}입니다.`, productId: mapping.productId, unitPrice, quantity, orderFormUrl: page.url() };
+  const orderPageText = await page.locator("body").innerText();
+  const shippingNotes = detectShippingNotes(optionLabel ?? "", itemPageText, orderPageText);
 
   const shippingFee = Number(await page.locator("#od_send_cost").inputValue());
   return {
     lineNo,
     status: "READY",
-    reason: optionLabel ? `상품·옵션(${optionLabel})·수량·재고·배송지 입력 검증 완료. 최종 주문은 제출하지 않았습니다.` : "상품·수량·재고·배송지 입력 검증 완료. 최종 주문은 제출하지 않았습니다.",
+    reason: `상품${optionLabel ? `·옵션(${optionLabel})` : ""}·수량·배송지 입력 검증 완료. 최종 주문은 제출하지 않았습니다.${shippingNotes.length ? ` 출고 확인 필요: ${shippingNotes.join(" / ")}` : ""}`,
     productId: mapping.productId,
     unitPrice,
     quantity,
     shippingFee,
     totalPrice: unitPrice * quantity + shippingFee,
     orderFormUrl: page.url(),
+    shippingNotes,
   };
 }
 
@@ -309,6 +338,7 @@ async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerRep
   const successRows = details.filter((entry) => entry.status === "READY").length;
   const failedRows = details.filter((entry) => entry.status === "FAILED").length;
   const holdRows = details.filter((entry) => entry.status === "HOLD").length;
+  const shippingNoticeRows = details.filter((entry) => (entry.shippingNotes?.length ?? 0) > 0).length;
   return {
     workerId,
     startedAt,
@@ -317,6 +347,7 @@ async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerRep
     successRows,
     failedRows,
     holdRows,
+    shippingNoticeRows,
     reviewState: failedRows || holdRows ? "BLOCKED" : "WAITING_FOR_DASHBOARD",
     canSubmit: false,
     details,
@@ -360,7 +391,7 @@ async function runOnce() {
             action: "BACKGROUND_RUN_FINISHED",
             actorName: "서버 자동화 워커",
             actorEmail: "",
-            detail: `총 ${report.totalRows}건 · 성공 ${report.successRows}건 · 실패 ${report.failedRows}건 · 보류 ${report.holdRows}건 · 최종 주문 미실행`,
+            detail: `총 ${report.totalRows}건 · 성공 ${report.successRows}건 · 실패 ${report.failedRows}건 · 보류 ${report.holdRows}건 · 출고 확인 필요 ${report.shippingNoticeRows}건 · 최종 주문 미실행`,
             createdAt: report.finishedAt,
           },
         });
