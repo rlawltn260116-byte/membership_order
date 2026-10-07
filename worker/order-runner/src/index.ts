@@ -138,33 +138,64 @@ function resolveWantedOption(row: OrderRow): string {
   return "";
 }
 
-// Eroum has no real inventory (the "My 보유 재고" figure is the buyer's own past orders), so stock is never a
-// reason to hold. What matters is shipping status: delays, scheduled dates, schedule pending, sold-out notices.
-const shippingPatterns: RegExp[] = [
-  /출고\s*지연/,
-  /\d{1,2}\s*[\/.월]\s*\d{1,2}\s*일?\s*(?:\([^)]*\))?\s*출고\s*(?:예정|가능)/,
-  /출고\s*(?:예정|일정)\s*(?:일\s*)?(?:확인|미정)/,
-  /(?:출고|배송)\s*일정\s*확인\s*중/,
-  /입고\s*(?:예정|지연)/,
-  /일시\s*품절|품절|예약\s*가능/,
-];
+// Eroum has no real inventory (the "내 보유 재고" figure is the buyer's own past orders), so stock is never a reason
+// to hold. What matters is the orange shipping banner shown on the product. Seen so far:
+//   "10/12 출고 예정", "10월 초 출고 예정", "10월 중순 출고 예정", "출고 일정 확인 중",
+//   and per-option / per-part banners: "회색 : 10/8 출고 예정", "롱젠손잡이 : 출고일정 확인중".
+const shippingStatusSource =
+  "(?:출고\\s*지연|\\d{1,2}\\s*[\\/.월]\\s*(?:\\d{1,2}\\s*일?|중순|하순|상순|초|중|말)?\\s*(?:\\([^)]*\\))?\\s*출고\\s*(?:예정|가능)|(?:출고|배송)\\s*(?:예정\\s*)?일정?\\s*(?:일\\s*)?(?:확인|미정)\\s*중?|입고\\s*(?:예정|지연)|일시\\s*품절|품절|예약\\s*가능)";
+const bannerPattern = new RegExp(`([가-힣A-Za-z0-9()\\-][가-힣A-Za-z0-9 ()\\-]{0,22}?)\\s*[:：]\\s*(${shippingStatusSource})`, "g");
+const barePattern = new RegExp(shippingStatusSource, "g");
 
-function detectShippingNotes(...sources: string[]): string[] {
-  const notes: string[] = [];
+type ShippingNote = { target: string; status: string };
+
+function formatShippingNote(note: ShippingNote): string {
+  return note.target ? `${note.target} : ${note.status}` : note.status;
+}
+
+function normalizeSpaces(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+// A banner is a short standalone line. Requiring almost nothing besides the matched text keeps menu items and
+// long sentences that merely mention shipping from being reported.
+function isBannerLike(line: string, matched: string, extraAllowed: number): boolean {
+  return normalizeSpaces(line.replace(matched, "")).length <= extraAllowed;
+}
+
+function detectShippingNotes(sources: string[]): ShippingNote[] {
+  const notes: ShippingNote[] = [];
+  const add = (note: ShippingNote) => {
+    const duplicate = notes.some((existing) => existing.status === note.status && (existing.target === note.target || !note.target || !existing.target));
+    if (!duplicate) notes.push(note);
+  };
   for (const source of sources) {
-    const lines = source.split(/\r?\n/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
-    for (let i = 0; i < lines.length; i += 1) {
-      // Join with the next line: the label and the date are often on separate lines.
-      const windowText = lines[i].length > 120 ? lines[i] : `${lines[i]} ${lines[i + 1] ?? ""}`.trim();
-      if (windowText.length > 160) continue;
-      for (const pattern of shippingPatterns) {
-        const found = windowText.match(pattern)?.[0]?.replace(/\s+/g, " ").trim();
-        if (found && !notes.includes(found)) notes.push(found);
+    const lines = source.split(/\r?\n/).map(normalizeSpaces).filter(Boolean);
+    // Each line on its own. A "회색 :" line followed by its status on the next line is joined; other neighbours are
+    // not, so a product name above a banner never leaks into the option label.
+    const candidates = lines.flatMap((line, i) => (/[:：]$/.test(line) && lines[i + 1] ? [line, `${line} ${lines[i + 1]}`] : [line]));
+    for (const candidate of candidates) {
+      if (candidate.length > 80) continue;
+      for (const match of candidate.matchAll(bannerPattern)) {
+        if (isBannerLike(candidate, match[0], 6)) add({ target: normalizeSpaces(match[1]), status: normalizeSpaces(match[2]) });
       }
-      if (notes.length >= 6) return notes.slice(0, 6);
+    }
+    for (const candidate of candidates) {
+      if (candidate.length > 80) continue;
+      for (const match of candidate.matchAll(barePattern)) {
+        if (isBannerLike(candidate, match[0], 6)) add({ target: "", status: normalizeSpaces(match[0]) });
+      }
     }
   }
-  return notes;
+  return notes.filter((note, index) => !(note.target === "" && notes.some((other, j) => j !== index && other.target !== "" && other.status === note.status))).slice(0, 8);
+}
+
+// A banner that names a specific option (e.g. "회색") only matters when that option is what we are ordering.
+function bannerAppliesToOption(note: ShippingNote, wantedOption: string): boolean {
+  if (!wantedOption || !note.target) return true;
+  const target = canonicalColor(note.target);
+  const wanted = canonicalColor(wantedOption);
+  return target === wanted || note.target.includes(wantedOption) || wantedOption.includes(note.target);
 }
 
 type OptionPick = { ok: true; label: string } | { ok: false; reason: string };
@@ -265,6 +296,7 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
     await page.locator(`input[name="ct_qty[${mapping.productId}][]"]:visible`).first().waitFor({ state: "visible", timeout: 10_000 });
   }
   const itemPageText = await productText();
+  const itemPageFullText = await page.locator("body").innerText();
   await page.locator(`input[name="ct_qty[${mapping.productId}][]"]:visible`).first().fill(String(quantity));
   await page.locator('input[type="submit"][value="상품주문"]:visible').first().click();
   await page.waitForURL("**/simple_order.php**", { timeout: 30_000 });
@@ -280,7 +312,9 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
   const formValid = await page.locator("#simple_order").evaluate((form) => (form as HTMLFormElement).checkValidity());
   if (!formValid) return { lineNo, status: "HOLD", reason: "이로움 주문서 필수 입력값 검증을 통과하지 못했습니다.", productId: mapping.productId, unitPrice, quantity, orderFormUrl: page.url() };
   const orderPageText = await page.locator("body").innerText();
-  const shippingNotes = detectShippingNotes(optionLabel ?? "", itemPageText, orderPageText);
+  const shippingNotes = detectShippingNotes([optionLabel ?? "", itemPageText, itemPageFullText, orderPageText])
+    .filter((note) => bannerAppliesToOption(note, wantedOption))
+    .map(formatShippingNote);
 
   const shippingFee = Number(await page.locator("#od_send_cost").inputValue());
   return {
