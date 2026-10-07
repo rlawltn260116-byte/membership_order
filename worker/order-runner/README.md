@@ -16,6 +16,8 @@ GitHub Pages stores jobs in Firebase Realtime Database. A Cloud Run Job polls `o
 
 The repository workflow `.github/workflows/order-worker.yml` runs every five minutes and can also be started manually. It checks Firebase for dashboard jobs in `QUEUED` status and returns a report to the same job. The user's PC and browser are not involved.
 
+The Playwright dependency is pinned to the same version as the GitHub Actions browser container so the headless Chromium executable is always available.
+
 Configure these GitHub Actions secrets before enabling the worker:
 
 - `FIREBASE_DATABASE_URL`: the project's Realtime Database URL.
