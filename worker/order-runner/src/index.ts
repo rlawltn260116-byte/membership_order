@@ -56,11 +56,36 @@ const productMappings: ProductMapping[] = [
   { model: "DA-006", productId: "PRO2022042900001", option: "COLOR_REQUIRED" },
 ];
 
+// Surface failures as GitHub annotations (readable without downloading logs).
+// Never include raw secret values: only fixed messages or sanitized error text.
+function annotateError(title: string, message: string) {
+  const safe = message.replace(/[\r\n]+/g, " ").slice(0, 300);
+  console.error(`::error title=${title}::${safe}`);
+}
+
+function configError(message: string): never {
+  annotateError("주문 워커 설정 오류", message);
+  process.exit(1);
+}
+
 const databaseUrl = process.env.FIREBASE_DATABASE_URL;
-if (!databaseUrl) throw new Error("FIREBASE_DATABASE_URL 환경변수가 필요합니다.");
+if (!databaseUrl) configError("FIREBASE_DATABASE_URL 환경변수가 필요합니다.");
+if (!/^https:\/\/.+\.(firebaseio\.com|firebasedatabase\.app)\/?$/.test(databaseUrl.trim())) {
+  configError("FIREBASE_DATABASE_URL 형식이 올바르지 않습니다 (https://<프로젝트>-default-rtdb.<지역>.firebasedatabase.app 형태여야 합니다).");
+}
 const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-if (!serviceAccountJson) throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON 환경변수가 필요합니다.");
-initializeApp({ credential: cert(JSON.parse(serviceAccountJson)), databaseURL: databaseUrl });
+if (!serviceAccountJson) configError("FIREBASE_SERVICE_ACCOUNT_JSON 환경변수가 필요합니다.");
+let serviceAccount: Record<string, unknown>;
+try {
+  serviceAccount = JSON.parse(serviceAccountJson) as Record<string, unknown>;
+} catch {
+  configError("FIREBASE_SERVICE_ACCOUNT_JSON 이 올바른 JSON 형식이 아닙니다 (파일 내용 전체를 붙여넣었는지 확인하세요).");
+}
+try {
+  initializeApp({ credential: cert(serviceAccount as never), databaseURL: databaseUrl.trim() });
+} catch (error) {
+  configError(`Firebase 서비스 계정 키가 올바르지 않습니다: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
+}
 const database = getDatabase();
 const queuePath = process.env.FIREBASE_QUEUE_PATH || "order-ops/jobs";
 const workerId = process.env.WORKER_ID || `web-worker-${randomUUID()}`;
@@ -268,6 +293,7 @@ async function runOnce() {
 
 runOnce()
   .catch((error: unknown) => {
+    annotateError("주문 워커 실행 오류", error instanceof Error ? `${error.name}: ${error.message}` : "알 수 없는 오류");
     console.error(error);
     process.exitCode = 1;
   })
