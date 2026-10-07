@@ -94,6 +94,9 @@ const now = () => new Date().toISOString();
 async function claimJob(jobId: string): Promise<OrderJob | null> {
   let claimed: OrderJob | null = null;
   await database.ref(`${queuePath}/${jobId}`).transaction((value) => {
+    // First invocation may see an empty local cache (null). Returning null makes
+    // Firebase retry with the real server value instead of aborting the claim.
+    if (value === null) return value;
     const current = value as OrderJob | null;
     if (!current || current.status !== "QUEUED") return;
     claimed = { ...current, id: jobId, status: "RUNNING" };
@@ -257,6 +260,7 @@ async function runOnce() {
     if ((child.val() as { status?: string } | null)?.status === "QUEUED") queuedIds.push(child.key as string);
     return false;
   });
+  console.log(`::notice title=주문 워커::큐 조회 ${recent.numChildren()}건 중 실행 대기 ${queuedIds.length}건`);
   if (queuedIds.length === 0) {
     console.log("Queue empty");
     return;
@@ -266,7 +270,10 @@ async function runOnce() {
   try {
     for (const jobId of queuedIds.slice(0, 10)) {
       const job = await claimJob(jobId);
-      if (!job) continue;
+      if (!job) {
+        console.log(`::warning title=주문 워커::작업 ${jobId} 선점에 실패했습니다 (다른 워커가 처리 중이거나 상태가 바뀜).`);
+        continue;
+      }
       try {
         const report = await prepareReport(job, browser);
         const auditKey = database.ref(`${queuePath}/${jobId}/auditLogs`).push().key ?? randomUUID();
