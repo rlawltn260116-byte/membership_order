@@ -1,6 +1,7 @@
 import { chromium } from "playwright";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 
 const outputPath = resolve(process.cwd(), "eroum-storage-state.json");
 const browser = await chromium.launch({ headless: false, channel: "chrome" });
@@ -22,6 +23,12 @@ while (Date.now() < deadline) {
     const state = await context.storageState();
     await writeFile(outputPath, JSON.stringify(state), { encoding: "utf8", mode: 0o600 });
     console.log(`LOGIN_CAPTURED ${outputPath}`);
+    // Copy to the clipboard so it can be pasted straight into the GitHub secret.
+    const clip = process.platform === "win32" ? ["clip", []] : process.platform === "darwin" ? ["pbcopy", []] : null;
+    if (clip) {
+      const copied = spawnSync(clip[0], clip[1], { input: JSON.stringify(state), shell: process.platform === "win32" });
+      if (copied.status === 0) console.log("로그인 세션을 클립보드에 복사했습니다. GitHub의 EROUM_STORAGE_STATE_JSON 비밀값 칸에 Ctrl+V 하세요.");
+    }
     await browser.close();
     process.exit(0);
   }
