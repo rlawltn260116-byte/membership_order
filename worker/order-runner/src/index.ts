@@ -266,7 +266,15 @@ async function runOnce() {
   }
 }
 
-runOnce().catch((error: unknown) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+runOnce()
+  .catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    // Firebase Realtime Database keeps a socket open, so exit explicitly
+    // instead of letting the GitHub Actions job hang until its timeout.
+    database.goOffline();
+    setTimeout(() => process.exit(process.exitCode ?? 0), 500).unref();
+    process.exit(process.exitCode ?? 0);
+  });
