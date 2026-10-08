@@ -1,0 +1,1203 @@
+{
+  "generatedAt": "2026-10-08T13:36:40.126651+09:00",
+  "source": {
+    "company": "티에이치케이컴퍼니",
+    "code": "THKC",
+    "channel": "이로움",
+    "dateRange": {
+      "from": 20260803,
+      "to": 20261007
+    }
+  },
+  "summary": {
+    "files": 86,
+    "filesParsed": 86,
+    "rows": 630,
+    "distinctOrderIds": 534,
+    "distinctProductStrings": 54,
+    "distinctProductBases": 39,
+    "morningFiles": 43,
+    "afternoonFiles": 43,
+    "specialFiles": 4,
+    "workbookErrors": 0,
+    "customerOrderRows": 578,
+    "customerOrders": 532,
+    "stockOrBranchRows": 51,
+    "unknownOrderRows": 1,
+    "multiLineCustomerOrders": 46
+  },
+  "schema": {
+    "sheetNames": {
+      "발주서": 86
+    },
+    "headerPatterns": [
+      {
+        "canonicalColumns": [
+          "orderId",
+          "destination",
+          "phone",
+          "product",
+          "quantity",
+          "note"
+        ],
+        "blocks": 87
+      }
+    ],
+    "columns": [
+      "주문번호",
+      "납품처",
+      "납품처전화번호",
+      "품명",
+      "주문수량",
+      "비고(내역)"
+    ],
+    "destinationRule": "납품처는 주로 주소_수취인 형식이며 마지막 밑줄로 분리. 밑줄이 없을 때 공백을 동반한 마지막 슬래시를 보조 구분자로 사용",
+    "postcodePresent": false
+  },
+  "orderRules": {
+    "customerOrderIdPattern": "^SO\\d{10}$",
+    "blankOrThkOrderId": "지점/재고 주문 후보. 고객 주문과 분리해 검토",
+    "postcode": "원본에 우편번호가 없어 주소 검색 또는 주소 API 보완 필요",
+    "recipient": "구분자로 수취인을 얻지 못하면 자동 제출 금지 후 검토",
+    "phone": "휴대전화와 지역번호 유선전화를 모두 허용. 숫자만 있는 9~11자리는 표준 하이픈 형식으로 정규화하고 그 외 형식은 검토",
+    "quantity": "양의 숫자만 실행 가능",
+    "notes": "배송지시, 센터 경유, 출입정보가 섞이므로 주문 메모로 보존하고 외부 노출 금지",
+    "finalSubmission": "운영 페이지 검토 수락 전에는 실행 금지"
+  },
+  "qualityCounts": {
+    "missingOrderIdRows": 50,
+    "missingRecipientRows": 142,
+    "missingAddressRows": 0,
+    "missingPhoneRows": 0,
+    "phoneFormatExceptionRows": 3,
+    "nonpositiveOrNonNumericQuantityRows": 0,
+    "multiLineOrderIdCount": 46
+  },
+  "products": [
+    {
+      "rawName": "성인용보행기 SPORTY",
+      "baseName": "성인용보행기 SPORTY",
+      "category": "성인용보행기",
+      "model": "SPORTY",
+      "option": "",
+      "orderRows": 89,
+      "totalQuantity": 114,
+      "customerOrderRows": 87,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260803,
+      "lastSeen": 20261007
+    },
+    {
+      "rawName": "미끄럼방지매트리스 DA-006 / 초록",
+      "baseName": "미끄럼방지매트리스 DA-006",
+      "category": "미끄럼방지매트리스",
+      "model": "DA-006",
+      "option": "초록",
+      "orderRows": 84,
+      "totalQuantity": 475,
+      "customerOrderRows": 67,
+      "stockOrBranchOrderRows": 17,
+      "firstSeen": 20260805,
+      "lastSeen": 20261007
+    },
+    {
+      "rawName": "미끄럼방지매트리스 DA-006 / 회색",
+      "baseName": "미끄럼방지매트리스 DA-006",
+      "category": "미끄럼방지매트리스",
+      "model": "DA-006",
+      "option": "회색",
+      "orderRows": 56,
+      "totalQuantity": 230,
+      "customerOrderRows": 49,
+      "stockOrBranchOrderRows": 7,
+      "firstSeen": 20260805,
+      "lastSeen": 20261007
+    },
+    {
+      "rawName": "성인용보행기 Handy",
+      "baseName": "성인용보행기 Handy",
+      "category": "성인용보행기",
+      "model": "Handy",
+      "option": "",
+      "orderRows": 39,
+      "totalQuantity": 62,
+      "customerOrderRows": 38,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260909,
+      "lastSeen": 20261007
+    },
+    {
+      "rawName": "지팡이 BS / 와인",
+      "baseName": "지팡이 BS",
+      "category": "지팡이",
+      "model": "BS",
+      "option": "와인",
+      "orderRows": 37,
+      "totalQuantity": 111,
+      "customerOrderRows": 33,
+      "stockOrBranchOrderRows": 4,
+      "firstSeen": 20260812,
+      "lastSeen": 20260922
+    },
+    {
+      "rawName": "성인용보행기 롤레이터 슬림핏(SL-0680) / 블랙",
+      "baseName": "성인용보행기 롤레이터 슬림핏(SL-0680)",
+      "category": "성인용보행기",
+      "model": "롤레이터 슬림핏(SL-0680)",
+      "option": "블랙",
+      "orderRows": 34,
+      "totalQuantity": 39,
+      "customerOrderRows": 34,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260902,
+      "lastSeen": 20261007
+    },
+    {
+      "rawName": "지팡이 LC / 와인",
+      "baseName": "지팡이 LC",
+      "category": "지팡이",
+      "model": "LC",
+      "option": "와인",
+      "orderRows": 26,
+      "totalQuantity": 40,
+      "customerOrderRows": 26,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260813,
+      "lastSeen": 20260904
+    },
+    {
+      "rawName": "지팡이 SS / 와인",
+      "baseName": "지팡이 SS",
+      "category": "지팡이",
+      "model": "SS",
+      "option": "와인",
+      "orderRows": 26,
+      "totalQuantity": 88,
+      "customerOrderRows": 22,
+      "stockOrBranchOrderRows": 4,
+      "firstSeen": 20260804,
+      "lastSeen": 20260904
+    },
+    {
+      "rawName": "자세변환용구 DYJ-03",
+      "baseName": "자세변환용구 DYJ-03",
+      "category": "자세변환용구",
+      "model": "DYJ-03",
+      "option": "",
+      "orderRows": 24,
+      "totalQuantity": 26,
+      "customerOrderRows": 24,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260803,
+      "lastSeen": 20261006
+    },
+    {
+      "rawName": "미끄럼방지매트리스 SC-2500 / 회색",
+      "baseName": "미끄럼방지매트리스 SC-2500",
+      "category": "미끄럼방지매트리스",
+      "model": "SC-2500",
+      "option": "회색",
+      "orderRows": 22,
+      "totalQuantity": 54,
+      "customerOrderRows": 21,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260803,
+      "lastSeen": 20261002
+    },
+    {
+      "rawName": "미끄럼방지매트리스 SC-2500 / 초록",
+      "baseName": "미끄럼방지매트리스 SC-2500",
+      "category": "미끄럼방지매트리스",
+      "model": "SC-2500",
+      "option": "초록",
+      "orderRows": 21,
+      "totalQuantity": 48,
+      "customerOrderRows": 21,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260803,
+      "lastSeen": 20261002
+    },
+    {
+      "rawName": "지팡이 BS / 브라운",
+      "baseName": "지팡이 BS",
+      "category": "지팡이",
+      "model": "BS",
+      "option": "브라운",
+      "orderRows": 21,
+      "totalQuantity": 36,
+      "customerOrderRows": 20,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260904,
+      "lastSeen": 20260918
+    },
+    {
+      "rawName": "자세변환용구 NSBS-PC5033",
+      "baseName": "자세변환용구 NSBS-PC5033",
+      "category": "자세변환용구",
+      "model": "NSBS-PC5033",
+      "option": "",
+      "orderRows": 16,
+      "totalQuantity": 17,
+      "customerOrderRows": 15,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260804,
+      "lastSeen": 20261001
+    },
+    {
+      "rawName": "성인용보행기 Let's Fly / 레드",
+      "baseName": "성인용보행기 Let's Fly",
+      "category": "성인용보행기",
+      "model": "Let's Fly",
+      "option": "레드",
+      "orderRows": 14,
+      "totalQuantity": 17,
+      "customerOrderRows": 14,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260807,
+      "lastSeen": 20261007
+    },
+    {
+      "rawName": "성인용보행기 롤레이터 슬림핏(SL-0680) / 블루",
+      "baseName": "성인용보행기 롤레이터 슬림핏(SL-0680)",
+      "category": "성인용보행기",
+      "model": "롤레이터 슬림핏(SL-0680)",
+      "option": "블루",
+      "orderRows": 13,
+      "totalQuantity": 14,
+      "customerOrderRows": 13,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260902,
+      "lastSeen": 20260914
+    },
+    {
+      "rawName": "지팡이 NS / 와인",
+      "baseName": "지팡이 NS",
+      "category": "지팡이",
+      "model": "NS",
+      "option": "와인",
+      "orderRows": 10,
+      "totalQuantity": 24,
+      "customerOrderRows": 10,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260819,
+      "lastSeen": 20260915
+    },
+    {
+      "rawName": "성인용보행기 SLT-10 / 블랙",
+      "baseName": "성인용보행기 SLT-10",
+      "category": "성인용보행기",
+      "model": "SLT-10",
+      "option": "블랙",
+      "orderRows": 8,
+      "totalQuantity": 15,
+      "customerOrderRows": 8,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260813,
+      "lastSeen": 20261007
+    },
+    {
+      "rawName": "지팡이 SS / 회색",
+      "baseName": "지팡이 SS",
+      "category": "지팡이",
+      "model": "SS",
+      "option": "회색",
+      "orderRows": 8,
+      "totalQuantity": 14,
+      "customerOrderRows": 8,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260824,
+      "lastSeen": 20260824
+    },
+    {
+      "rawName": "성인용보행기 롤레이터 슬림핏(SL-0680) / 레드",
+      "baseName": "성인용보행기 롤레이터 슬림핏(SL-0680)",
+      "category": "성인용보행기",
+      "model": "롤레이터 슬림핏(SL-0680)",
+      "option": "레드",
+      "orderRows": 6,
+      "totalQuantity": 6,
+      "customerOrderRows": 6,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260917,
+      "lastSeen": 20261007
+    },
+    {
+      "rawName": "자세변환용구 MPG-05",
+      "baseName": "자세변환용구 MPG-05",
+      "category": "자세변환용구",
+      "model": "MPG-05",
+      "option": "",
+      "orderRows": 6,
+      "totalQuantity": 10,
+      "customerOrderRows": 6,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260803,
+      "lastSeen": 20260921
+    },
+    {
+      "rawName": "성인용보행기 Let's Fly / 그레이",
+      "baseName": "성인용보행기 Let's Fly",
+      "category": "성인용보행기",
+      "model": "Let's Fly",
+      "option": "그레이",
+      "orderRows": 5,
+      "totalQuantity": 5,
+      "customerOrderRows": 5,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260818,
+      "lastSeen": 20261006
+    },
+    {
+      "rawName": "성인용보행기 Let's Move / 블랙",
+      "baseName": "성인용보행기 Let's Move",
+      "category": "성인용보행기",
+      "model": "Let's Move",
+      "option": "블랙",
+      "orderRows": 5,
+      "totalQuantity": 5,
+      "customerOrderRows": 5,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260819,
+      "lastSeen": 20261001
+    },
+    {
+      "rawName": "수동휠체어 NA-101W (440/블랙)",
+      "baseName": "수동휠체어 NA-101W (440/블랙)",
+      "category": "수동휠체어",
+      "model": "NA-101W (440/블랙)",
+      "option": "",
+      "orderRows": 5,
+      "totalQuantity": 11,
+      "customerOrderRows": 4,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260810,
+      "lastSeen": 20261006
+    },
+    {
+      "rawName": "성인용보행기 SLT-10 / 오렌지",
+      "baseName": "성인용보행기 SLT-10",
+      "category": "성인용보행기",
+      "model": "SLT-10",
+      "option": "오렌지",
+      "orderRows": 4,
+      "totalQuantity": 4,
+      "customerOrderRows": 4,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260804,
+      "lastSeen": 20261007
+    },
+    {
+      "rawName": "안전손잡이 URB-SG001[G]",
+      "baseName": "안전손잡이 URB-SG001[G]",
+      "category": "안전손잡이",
+      "model": "URB-SG001[G]",
+      "option": "",
+      "orderRows": 4,
+      "totalQuantity": 4,
+      "customerOrderRows": 4,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260804,
+      "lastSeen": 20260902
+    },
+    {
+      "rawName": "자세변환용구 MPG-06",
+      "baseName": "자세변환용구 MPG-06",
+      "category": "자세변환용구",
+      "model": "MPG-06",
+      "option": "",
+      "orderRows": 4,
+      "totalQuantity": 4,
+      "customerOrderRows": 4,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260806,
+      "lastSeen": 20261006
+    },
+    {
+      "rawName": "자세변환용구 MPG-07",
+      "baseName": "자세변환용구 MPG-07",
+      "category": "자세변환용구",
+      "model": "MPG-07",
+      "option": "",
+      "orderRows": 4,
+      "totalQuantity": 4,
+      "customerOrderRows": 4,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260818,
+      "lastSeen": 20260921
+    },
+    {
+      "rawName": "지팡이 BS 부품",
+      "baseName": "지팡이 BS 부품",
+      "category": "지팡이",
+      "model": "BS 부품",
+      "option": "",
+      "orderRows": 4,
+      "totalQuantity": 12,
+      "customerOrderRows": 4,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260805,
+      "lastSeen": 20260818
+    },
+    {
+      "rawName": "지팡이 아이온 사발지팡이 부품",
+      "baseName": "지팡이 아이온 사발지팡이 부품",
+      "category": "지팡이",
+      "model": "아이온 사발지팡이 부품",
+      "option": "",
+      "orderRows": 4,
+      "totalQuantity": 10,
+      "customerOrderRows": 4,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260819,
+      "lastSeen": 20260901
+    },
+    {
+      "rawName": "성인용보행기 Let's Move / 그레이",
+      "baseName": "성인용보행기 Let's Move",
+      "category": "성인용보행기",
+      "model": "Let's Move",
+      "option": "그레이",
+      "orderRows": 3,
+      "totalQuantity": 3,
+      "customerOrderRows": 3,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260831,
+      "lastSeen": 20260918
+    },
+    {
+      "rawName": "지팡이 SS (사발) 부품",
+      "baseName": "지팡이 SS (사발) 부품",
+      "category": "지팡이",
+      "model": "SS (사발) 부품",
+      "option": "",
+      "orderRows": 3,
+      "totalQuantity": 11,
+      "customerOrderRows": 3,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260810,
+      "lastSeen": 20260902
+    },
+    {
+      "rawName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면 / 네이비(S)",
+      "baseName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면",
+      "category": "미끄럼방지양말",
+      "model": "위풋 논슬립 돌돌이 양말 양면",
+      "option": "네이비(S)",
+      "orderRows": 2,
+      "totalQuantity": 300,
+      "customerOrderRows": 1,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260806,
+      "lastSeen": 20260930
+    },
+    {
+      "rawName": "지팡이 SS 부품",
+      "baseName": "지팡이 SS 부품",
+      "category": "지팡이",
+      "model": "SS 부품",
+      "option": "",
+      "orderRows": 2,
+      "totalQuantity": 7,
+      "customerOrderRows": 2,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260812,
+      "lastSeen": 20260812
+    },
+    {
+      "rawName": "DA-006 / 회색",
+      "baseName": "DA-006",
+      "category": "미끄럼방지매트리스",
+      "model": "DA-006",
+      "option": "회색",
+      "orderRows": 1,
+      "totalQuantity": 30,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260921,
+      "lastSeen": 20260921
+    },
+    {
+      "rawName": "DA-006(초록)",
+      "baseName": "DA-006",
+      "category": "미끄럼방지매트리스",
+      "model": "DA-006",
+      "option": "초록",
+      "orderRows": 1,
+      "totalQuantity": 20,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260922,
+      "lastSeen": 20260922
+    },
+    {
+      "rawName": "미끄럼방지양말 YH-202(여성/겨울용)",
+      "baseName": "미끄럼방지양말 YH-202(여성/겨울용)",
+      "category": "미끄럼방지양말",
+      "model": "YH-202(여성/겨울용)",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 250,
+      "customerOrderRows": 1,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260917,
+      "lastSeen": 20260917
+    },
+    {
+      "rawName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면 / 검정(S)",
+      "baseName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면",
+      "category": "미끄럼방지양말",
+      "model": "위풋 논슬립 돌돌이 양말 양면",
+      "option": "검정(S)",
+      "orderRows": 1,
+      "totalQuantity": 400,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260806,
+      "lastSeen": 20260806
+    },
+    {
+      "rawName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면 / 네이비(M)",
+      "baseName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면",
+      "category": "미끄럼방지양말",
+      "model": "위풋 논슬립 돌돌이 양말 양면",
+      "option": "네이비(M)",
+      "orderRows": 1,
+      "totalQuantity": 400,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260806,
+      "lastSeen": 20260806
+    },
+    {
+      "rawName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면 / 베이지(S)",
+      "baseName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면",
+      "category": "미끄럼방지양말",
+      "model": "위풋 논슬립 돌돌이 양말 양면",
+      "option": "베이지(S)",
+      "orderRows": 1,
+      "totalQuantity": 1000,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260806,
+      "lastSeen": 20260806
+    },
+    {
+      "rawName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면 / 회색(M)",
+      "baseName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면",
+      "category": "미끄럼방지양말",
+      "model": "위풋 논슬립 돌돌이 양말 양면",
+      "option": "회색(M)",
+      "orderRows": 1,
+      "totalQuantity": 1000,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260806,
+      "lastSeen": 20260806
+    },
+    {
+      "rawName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면 / 회색(S)",
+      "baseName": "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면",
+      "category": "미끄럼방지양말",
+      "model": "위풋 논슬립 돌돌이 양말 양면",
+      "option": "회색(S)",
+      "orderRows": 1,
+      "totalQuantity": 400,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260806,
+      "lastSeen": 20260806
+    },
+    {
+      "rawName": "미끄럼방지양말 위풋 자석 덧신 양면(검정,M)",
+      "baseName": "미끄럼방지양말 위풋 자석 덧신 양면(검정,M)",
+      "category": "미끄럼방지양말",
+      "model": "위풋 자석 덧신 양면(검정,M)",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 200,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260806,
+      "lastSeen": 20260806
+    },
+    {
+      "rawName": "미끄럼방지양말 위풋 자석 덧신 양면(베이지,S)",
+      "baseName": "미끄럼방지양말 위풋 자석 덧신 양면(베이지,S)",
+      "category": "미끄럼방지양말",
+      "model": "위풋 자석 덧신 양면(베이지,S)",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 200,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260806,
+      "lastSeen": 20260806
+    },
+    {
+      "rawName": "미끄럼방지양말 위풋 자석 덧신 양면(회색,M)",
+      "baseName": "미끄럼방지양말 위풋 자석 덧신 양면(회색,M)",
+      "category": "미끄럼방지양말",
+      "model": "위풋 자석 덧신 양면(회색,M)",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 600,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260806,
+      "lastSeen": 20260806
+    },
+    {
+      "rawName": "미끄럼방지양말 위풋 자석 덧신 양면(회색,S)",
+      "baseName": "미끄럼방지양말 위풋 자석 덧신 양면(회색,S)",
+      "category": "미끄럼방지양말",
+      "model": "위풋 자석 덧신 양면(회색,S)",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 600,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260806,
+      "lastSeen": 20260806
+    },
+    {
+      "rawName": "성인용보행기 E:CHA(이차) / 실버",
+      "baseName": "성인용보행기 E:CHA(이차)",
+      "category": "성인용보행기",
+      "model": "E:CHA(이차)",
+      "option": "실버",
+      "orderRows": 1,
+      "totalQuantity": 6,
+      "customerOrderRows": 0,
+      "stockOrBranchOrderRows": 1,
+      "firstSeen": 20260828,
+      "lastSeen": 20260828
+    },
+    {
+      "rawName": "안전손잡이 URB-SG001[B]",
+      "baseName": "안전손잡이 URB-SG001[B]",
+      "category": "안전손잡이",
+      "model": "URB-SG001[B]",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 1,
+      "customerOrderRows": 1,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260810,
+      "lastSeen": 20260810
+    },
+    {
+      "rawName": "욕창예방방석 BLESSON 7",
+      "baseName": "욕창예방방석 BLESSON 7",
+      "category": "욕창예방방석",
+      "model": "BLESSON 7",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 1,
+      "customerOrderRows": 1,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260805,
+      "lastSeen": 20260805
+    },
+    {
+      "rawName": "이동변기부품 NT-CT100 변기통",
+      "baseName": "이동변기부품 NT-CT100 변기통",
+      "category": "이동변기부품",
+      "model": "NT-CT100 변기통",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 1,
+      "customerOrderRows": 1,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260810,
+      "lastSeen": 20260810
+    },
+    {
+      "rawName": "지팡이 LC LED모듈",
+      "baseName": "지팡이 LC LED모듈",
+      "category": "지팡이",
+      "model": "LC LED모듈",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 1,
+      "customerOrderRows": 1,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260828,
+      "lastSeen": 20260828
+    },
+    {
+      "rawName": "지팡이 LC 지팡이 스트랩 끈",
+      "baseName": "지팡이 LC 지팡이 스트랩 끈",
+      "category": "지팡이",
+      "model": "LC 지팡이 스트랩 끈",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 1,
+      "customerOrderRows": 1,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260828,
+      "lastSeen": 20260828
+    },
+    {
+      "rawName": "지팡이 SS 고무패킹",
+      "baseName": "지팡이 SS 고무패킹",
+      "category": "지팡이",
+      "model": "SS 고무패킹",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 1,
+      "customerOrderRows": 1,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260828,
+      "lastSeen": 20260828
+    },
+    {
+      "rawName": "지팡이 TW-0128 / 부품",
+      "baseName": "지팡이 TW-0128",
+      "category": "지팡이",
+      "model": "TW-0128",
+      "option": "부품",
+      "orderRows": 1,
+      "totalQuantity": 4,
+      "customerOrderRows": 1,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20260914,
+      "lastSeen": 20260914
+    },
+    {
+      "rawName": "휠체어부품 NA-101W 부품",
+      "baseName": "휠체어부품 NA-101W 부품",
+      "category": "휠체어부품",
+      "model": "NA-101W 부품",
+      "option": "",
+      "orderRows": 1,
+      "totalQuantity": 1,
+      "customerOrderRows": 1,
+      "stockOrBranchOrderRows": 0,
+      "firstSeen": 20261002,
+      "lastSeen": 20261002
+    }
+  ],
+  "productGroups": [
+    {
+      "category": "미끄럼방지매트리스",
+      "model": "DA-006",
+      "aliases": [
+        "DA-006",
+        "미끄럼방지매트리스 DA-006"
+      ],
+      "options": [
+        "초록",
+        "회색"
+      ],
+      "orderRows": 142,
+      "totalQuantity": 755.0
+    },
+    {
+      "category": "성인용보행기",
+      "model": "SPORTY",
+      "aliases": [
+        "성인용보행기 SPORTY"
+      ],
+      "options": [],
+      "orderRows": 89,
+      "totalQuantity": 114.0
+    },
+    {
+      "category": "지팡이",
+      "model": "BS",
+      "aliases": [
+        "지팡이 BS"
+      ],
+      "options": [
+        "브라운",
+        "와인"
+      ],
+      "orderRows": 58,
+      "totalQuantity": 147.0
+    },
+    {
+      "category": "성인용보행기",
+      "model": "롤레이터 슬림핏(SL-0680)",
+      "aliases": [
+        "성인용보행기 롤레이터 슬림핏(SL-0680)"
+      ],
+      "options": [
+        "레드",
+        "블랙",
+        "블루"
+      ],
+      "orderRows": 53,
+      "totalQuantity": 59.0
+    },
+    {
+      "category": "미끄럼방지매트리스",
+      "model": "SC-2500",
+      "aliases": [
+        "미끄럼방지매트리스 SC-2500"
+      ],
+      "options": [
+        "초록",
+        "회색"
+      ],
+      "orderRows": 43,
+      "totalQuantity": 102.0
+    },
+    {
+      "category": "성인용보행기",
+      "model": "Handy",
+      "aliases": [
+        "성인용보행기 Handy"
+      ],
+      "options": [],
+      "orderRows": 39,
+      "totalQuantity": 62.0
+    },
+    {
+      "category": "지팡이",
+      "model": "SS",
+      "aliases": [
+        "지팡이 SS"
+      ],
+      "options": [
+        "와인",
+        "회색"
+      ],
+      "orderRows": 34,
+      "totalQuantity": 102.0
+    },
+    {
+      "category": "지팡이",
+      "model": "LC",
+      "aliases": [
+        "지팡이 LC"
+      ],
+      "options": [
+        "와인"
+      ],
+      "orderRows": 26,
+      "totalQuantity": 40.0
+    },
+    {
+      "category": "자세변환용구",
+      "model": "DYJ-03",
+      "aliases": [
+        "자세변환용구 DYJ-03"
+      ],
+      "options": [],
+      "orderRows": 24,
+      "totalQuantity": 26.0
+    },
+    {
+      "category": "성인용보행기",
+      "model": "Let's Fly",
+      "aliases": [
+        "성인용보행기 Let's Fly"
+      ],
+      "options": [
+        "그레이",
+        "레드"
+      ],
+      "orderRows": 19,
+      "totalQuantity": 22.0
+    },
+    {
+      "category": "자세변환용구",
+      "model": "NSBS-PC5033",
+      "aliases": [
+        "자세변환용구 NSBS-PC5033"
+      ],
+      "options": [],
+      "orderRows": 16,
+      "totalQuantity": 17.0
+    },
+    {
+      "category": "성인용보행기",
+      "model": "SLT-10",
+      "aliases": [
+        "성인용보행기 SLT-10"
+      ],
+      "options": [
+        "블랙",
+        "오렌지"
+      ],
+      "orderRows": 12,
+      "totalQuantity": 19.0
+    },
+    {
+      "category": "지팡이",
+      "model": "NS",
+      "aliases": [
+        "지팡이 NS"
+      ],
+      "options": [
+        "와인"
+      ],
+      "orderRows": 10,
+      "totalQuantity": 24.0
+    },
+    {
+      "category": "성인용보행기",
+      "model": "Let's Move",
+      "aliases": [
+        "성인용보행기 Let's Move"
+      ],
+      "options": [
+        "그레이",
+        "블랙"
+      ],
+      "orderRows": 8,
+      "totalQuantity": 8.0
+    },
+    {
+      "category": "미끄럼방지양말",
+      "model": "위풋 논슬립 돌돌이 양말 양면",
+      "aliases": [
+        "미끄럼방지양말 위풋 논슬립 돌돌이 양말 양면"
+      ],
+      "options": [
+        "검정(S)",
+        "네이비(M)",
+        "네이비(S)",
+        "베이지(S)",
+        "회색(M)",
+        "회색(S)"
+      ],
+      "orderRows": 7,
+      "totalQuantity": 3500.0
+    },
+    {
+      "category": "자세변환용구",
+      "model": "MPG-05",
+      "aliases": [
+        "자세변환용구 MPG-05"
+      ],
+      "options": [],
+      "orderRows": 6,
+      "totalQuantity": 10.0
+    },
+    {
+      "category": "수동휠체어",
+      "model": "NA-101W (440/블랙)",
+      "aliases": [
+        "수동휠체어 NA-101W (440/블랙)"
+      ],
+      "options": [],
+      "orderRows": 5,
+      "totalQuantity": 11.0
+    },
+    {
+      "category": "안전손잡이",
+      "model": "URB-SG001[G]",
+      "aliases": [
+        "안전손잡이 URB-SG001[G]"
+      ],
+      "options": [],
+      "orderRows": 4,
+      "totalQuantity": 4.0
+    },
+    {
+      "category": "자세변환용구",
+      "model": "MPG-06",
+      "aliases": [
+        "자세변환용구 MPG-06"
+      ],
+      "options": [],
+      "orderRows": 4,
+      "totalQuantity": 4.0
+    },
+    {
+      "category": "자세변환용구",
+      "model": "MPG-07",
+      "aliases": [
+        "자세변환용구 MPG-07"
+      ],
+      "options": [],
+      "orderRows": 4,
+      "totalQuantity": 4.0
+    },
+    {
+      "category": "지팡이",
+      "model": "BS 부품",
+      "aliases": [
+        "지팡이 BS 부품"
+      ],
+      "options": [],
+      "orderRows": 4,
+      "totalQuantity": 12.0
+    },
+    {
+      "category": "지팡이",
+      "model": "아이온 사발지팡이 부품",
+      "aliases": [
+        "지팡이 아이온 사발지팡이 부품"
+      ],
+      "options": [],
+      "orderRows": 4,
+      "totalQuantity": 10.0
+    },
+    {
+      "category": "지팡이",
+      "model": "SS (사발) 부품",
+      "aliases": [
+        "지팡이 SS (사발) 부품"
+      ],
+      "options": [],
+      "orderRows": 3,
+      "totalQuantity": 11.0
+    },
+    {
+      "category": "지팡이",
+      "model": "SS 부품",
+      "aliases": [
+        "지팡이 SS 부품"
+      ],
+      "options": [],
+      "orderRows": 2,
+      "totalQuantity": 7.0
+    },
+    {
+      "category": "미끄럼방지양말",
+      "model": "YH-202(여성/겨울용)",
+      "aliases": [
+        "미끄럼방지양말 YH-202(여성/겨울용)"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 250.0
+    },
+    {
+      "category": "미끄럼방지양말",
+      "model": "위풋 자석 덧신 양면(검정,M)",
+      "aliases": [
+        "미끄럼방지양말 위풋 자석 덧신 양면(검정,M)"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 200.0
+    },
+    {
+      "category": "미끄럼방지양말",
+      "model": "위풋 자석 덧신 양면(베이지,S)",
+      "aliases": [
+        "미끄럼방지양말 위풋 자석 덧신 양면(베이지,S)"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 200.0
+    },
+    {
+      "category": "미끄럼방지양말",
+      "model": "위풋 자석 덧신 양면(회색,M)",
+      "aliases": [
+        "미끄럼방지양말 위풋 자석 덧신 양면(회색,M)"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 600.0
+    },
+    {
+      "category": "미끄럼방지양말",
+      "model": "위풋 자석 덧신 양면(회색,S)",
+      "aliases": [
+        "미끄럼방지양말 위풋 자석 덧신 양면(회색,S)"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 600.0
+    },
+    {
+      "category": "성인용보행기",
+      "model": "E:CHA(이차)",
+      "aliases": [
+        "성인용보행기 E:CHA(이차)"
+      ],
+      "options": [
+        "실버"
+      ],
+      "orderRows": 1,
+      "totalQuantity": 6.0
+    },
+    {
+      "category": "안전손잡이",
+      "model": "URB-SG001[B]",
+      "aliases": [
+        "안전손잡이 URB-SG001[B]"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 1.0
+    },
+    {
+      "category": "욕창예방방석",
+      "model": "BLESSON 7",
+      "aliases": [
+        "욕창예방방석 BLESSON 7"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 1.0
+    },
+    {
+      "category": "이동변기부품",
+      "model": "NT-CT100 변기통",
+      "aliases": [
+        "이동변기부품 NT-CT100 변기통"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 1.0
+    },
+    {
+      "category": "지팡이",
+      "model": "LC LED모듈",
+      "aliases": [
+        "지팡이 LC LED모듈"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 1.0
+    },
+    {
+      "category": "지팡이",
+      "model": "LC 지팡이 스트랩 끈",
+      "aliases": [
+        "지팡이 LC 지팡이 스트랩 끈"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 1.0
+    },
+    {
+      "category": "지팡이",
+      "model": "SS 고무패킹",
+      "aliases": [
+        "지팡이 SS 고무패킹"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 1.0
+    },
+    {
+      "category": "지팡이",
+      "model": "TW-0128",
+      "aliases": [
+        "지팡이 TW-0128"
+      ],
+      "options": [
+        "부품"
+      ],
+      "orderRows": 1,
+      "totalQuantity": 4.0
+    },
+    {
+      "category": "휠체어부품",
+      "model": "NA-101W 부품",
+      "aliases": [
+        "휠체어부품 NA-101W 부품"
+      ],
+      "options": [],
+      "orderRows": 1,
+      "totalQuantity": 1.0
+    }
+  ]
+}
