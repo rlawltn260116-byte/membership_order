@@ -355,8 +355,8 @@ async function reserveTrustedSubmissionRequest(requestId: string): Promise<{ ok:
   const token = process.env.GITHUB_TOKEN ?? "";
   const repository = process.env.GITHUB_REPOSITORY ?? "";
   if (!token || !repository) return { ok: false, reason: "서버의 중복 주문 방지 저장소가 설정되지 않았습니다." };
-  const variableName = "USED_SUBMISSION_REQUESTS";
-  const baseUrl = `https://api.github.com/repos/${repository}/actions/variables`;
+  const ledgerPath = ".github/order-submission-ledger.json";
+  const baseUrl = `https://api.github.com/repos/${repository}/contents/${ledgerPath}`;
   const headers = {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
@@ -364,12 +364,15 @@ async function reserveTrustedSubmissionRequest(requestId: string): Promise<{ ok:
     "Content-Type": "application/json",
     "User-Agent": "membership-order-worker",
   };
-  const existing = await fetch(`${baseUrl}/${variableName}`, { headers });
+  const existing = await fetch(`${baseUrl}?ref=main`, { headers });
   let used: string[] = [];
+  let sha = "";
   if (existing.ok) {
-    const payload = await existing.json() as { value?: string };
+    const payload = await existing.json() as { content?: string; sha?: string };
+    sha = payload.sha ?? "";
     try {
-      const parsed = JSON.parse(payload.value ?? "[]") as unknown;
+      const decoded = Buffer.from((payload.content ?? "").replace(/\s/g, ""), "base64").toString("utf8");
+      const parsed = JSON.parse(decoded || "[]") as unknown;
       used = Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
     } catch {
       return { ok: false, reason: "서버의 중복 주문 방지 기록 형식이 올바르지 않습니다." };
@@ -380,10 +383,17 @@ async function reserveTrustedSubmissionRequest(requestId: string): Promise<{ ok:
   if (used.includes(requestId)) {
     return { ok: false, reason: "이미 사용된 최종 승인 요청입니다. 중복 주문 방지를 위해 다시 제출하지 않았습니다." };
   }
-  const value = JSON.stringify([...used.slice(-499), requestId]);
-  const saved = existing.status === 404
-    ? await fetch(baseUrl, { method: "POST", headers, body: JSON.stringify({ name: variableName, value }) })
-    : await fetch(`${baseUrl}/${variableName}`, { method: "PATCH", headers, body: JSON.stringify({ name: variableName, value }) });
+  const value = `${JSON.stringify([...used.slice(-499), requestId], null, 2)}\n`;
+  const saved = await fetch(baseUrl, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({
+      message: `Reserve order submission ${requestId}`,
+      content: Buffer.from(value, "utf8").toString("base64"),
+      branch: "main",
+      ...(sha ? { sha } : {}),
+    }),
+  });
   if (!saved.ok) return { ok: false, reason: `서버의 중복 주문 방지 기록을 저장하지 못했습니다 (${saved.status}).` };
   return { ok: true };
 }
