@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: membership-order-worker
@@ -53,6 +54,8 @@ jobs:
           FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           EROUM_STORAGE_STATE_JSON: ${{ secrets.EROUM_STORAGE_STATE_JSON }}
+          FINAL_SUBMISSION_APPROVAL_KEY: ${{ secrets.FINAL_SUBMISSION_APPROVAL_KEY }}
           FIREBASE_QUEUE_PATH: order-ops/jobs
           WORKER_ID: github-actions-order-worker
+          GITHUB_TOKEN: ${{ github.token }}
         run: npm start

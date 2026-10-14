@@ -6,11 +6,14 @@ GitHub Pages stores jobs in Firebase Realtime Database. A Cloud Run Job polls `o
 
 - Claims queued work and reports `RUNNING`, then `HOLD` or `AWAITING_REVIEW`.
 - Writes worker identity, start/end timestamps, row counts, reason details, and a dashboard review state.
-- Never submits an order. `report.canSubmit` is always `false`.
+- 준비 실행은 주문을 제출하지 않습니다. 준비 성공 후 운영 페이지에서 `검토 수락`과 `주문 확정`을 차례로 승인한 1행 작업만 실제 제출할 수 있습니다.
 - Validates that a server-side Eroum browser session is present and active.
 - DYJ-03·DA-006 상품은 상품 매핑, (필요 시) 색상 옵션 선택, 수량·가격 확인, 주문서 배송지 입력과 HTML 필수값 검증까지 수행합니다.
 - 이로움의 `My 보유 재고`는 이로움 재고가 아니라 구매자의 과거 주문 수량이므로 재고 부족으로 보류하지 않습니다. 대신 출고지연·`N/N일 출고 예정`·출고 일정 확인 중·품절 안내를 찾아 행별 `shippingNotes`와 리포트의 `shippingNoticeRows`로 따로 기록합니다.
-- 최종 `주문하기` 버튼은 호출하지 않으며 준비 결과만 대시보드의 `AWAITING_REVIEW` 상태로 기록합니다.
+- 준비 단계에서는 최종 `주문하기` 버튼을 호출하지 않고 `AWAITING_REVIEW`로 기록합니다. 실제 제출은 승인 코드가 일치하는 `SUBMIT_QUEUED` 작업만 처리합니다.
+- 실제 제출 직전에 Firebase에 행별 `SUBMITTING` 잠금을 먼저 저장합니다. 제출 결과가 불명확하면 `UNKNOWN`으로 멈추고 자동 재시도하지 않아 중복 주문을 방지합니다.
+- 일회성 최종 승인 요청번호는 GitHub Actions 저장소 변수에도 사용 완료로 먼저 기록합니다. 공개 Firebase 값이 재전송되더라도 같은 승인으로 주문을 다시 넣지 않습니다.
+- 현재 실제 제출은 한 번에 1행만 허용합니다. 같은 주문번호의 복수 품목 묶음 제출은 별도 구현 전까지 차단합니다.
 - 옵션(색상)은 주문 파일의 `option`(색상/옵션) 열 값으로 선택하고, 비어 있으면 상품명에 적힌 색상을 사용합니다. 값이 없거나 이로움에서 옵션을 찾지 못하면 `HOLD`로 기록합니다.
 
 ## GitHub Actions worker
@@ -24,8 +27,9 @@ Configure these GitHub Actions secrets before enabling the worker:
 - `FIREBASE_DATABASE_URL`: the project's Realtime Database URL.
 - `FIREBASE_SERVICE_ACCOUNT_JSON`: a Firebase service account JSON with Realtime Database access.
 - `EROUM_STORAGE_STATE_JSON`: Playwright storage state for the authorized Eroum account. Never commit it or put it in the dashboard.
+- `FINAL_SUBMISSION_APPROVAL_KEY`: 12자 이상의 최종 승인 코드. 운영 페이지는 원문을 저장하지 않고 작업 ID와 일회성 요청번호를 포함한 SHA-256 증명값만 Firebase에 저장합니다.
 
-`FIREBASE_QUEUE_PATH` defaults to `order-ops/jobs`; `WORKER_ID` is optional. Suggested state flow: `QUEUED → RUNNING → AWAITING_REVIEW → SUBMIT_QUEUED → COMPLETED`. Failures and unresolved fields remain `HOLD` or `FAILED`. The dashboard records review and any future final approval. A future submit adapter must verify explicit dashboard approval before it can submit.
+`FIREBASE_QUEUE_PATH` defaults to `order-ops/jobs`; `WORKER_ID` is optional. State flow: `QUEUED → RUNNING → AWAITING_REVIEW → REVIEWED → SUBMIT_QUEUED → RUNNING → COMPLETED`. Failures and unresolved fields remain `HOLD` or `FAILED`. 최종 제출 워커는 검토 수락, 최종 승인, 승인 코드 증명값을 모두 다시 확인합니다.
 
 ## Build
 

@@ -1,7 +1,7 @@
 import { cert, initializeApp } from "firebase-admin/app";
 import { getDatabase } from "firebase-admin/database";
 import { chromium, type Browser, type Page } from "playwright";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 type RowStatus = "READY" | "HOLD" | "FAILED";
 
@@ -23,7 +23,22 @@ type OrderRow = {
   reason?: string;
 };
 
-type OrderJob = { id: string; sourceSystem?: string; status?: string; rows?: OrderRow[] };
+type ExecutionMode = "PREPARE" | "SUBMIT";
+
+type OrderJob = {
+  id: string;
+  sourceSystem?: string;
+  status?: string;
+  executionMode?: ExecutionMode;
+  rows?: OrderRow[];
+  dashboardReview?: {
+    decision?: "ACCEPTED" | "ON_HOLD";
+    finalSubmissionApproved?: boolean;
+    finalSubmissionApprovedAt?: string;
+    submissionRequestId?: string;
+    approvalProof?: string;
+  };
+};
 
 type WorkerDetail = {
   lineNo: number;
@@ -36,6 +51,8 @@ type WorkerDetail = {
   totalPrice?: number;
   orderFormUrl?: string;
   shippingNotes?: string[];
+  orderNumber?: string;
+  submittedAt?: string;
 };
 
 type WorkerReport = {
@@ -47,8 +64,9 @@ type WorkerReport = {
   failedRows: number;
   holdRows: number;
   shippingNoticeRows: number;
-  reviewState: "WAITING_FOR_DASHBOARD" | "BLOCKED";
-  canSubmit: false;
+  submittedRows: number;
+  reviewState: "WAITING_FOR_DASHBOARD" | "BLOCKED" | "COMPLETED";
+  canSubmit: boolean;
   details: WorkerDetail[];
 };
 
@@ -101,8 +119,9 @@ async function claimJob(jobId: string): Promise<OrderJob | null> {
     // Firebase retry with the real server value instead of aborting the claim.
     if (value === null) return value;
     const current = value as OrderJob | null;
-    if (!current || current.status !== "QUEUED") return;
-    claimed = { ...current, id: jobId, status: "RUNNING" };
+    if (!current || !["QUEUED", "SUBMIT_QUEUED"].includes(current.status ?? "")) return;
+    const executionMode: ExecutionMode = current.status === "SUBMIT_QUEUED" ? "SUBMIT" : "PREPARE";
+    claimed = { ...current, id: jobId, status: "RUNNING", executionMode };
     return claimed;
   }, undefined, false);
   return claimed;
@@ -306,7 +325,129 @@ async function setReadonlyInput(page: Page, selector: string, value: string): Pr
   }, value);
 }
 
-async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promise<WorkerDetail> {
+type SubmissionRowState = {
+  state: "SUBMITTING" | "SUBMITTED" | "UNKNOWN";
+  attemptId: string;
+  startedAt: string;
+  submittedAt?: string;
+  orderNumber?: string;
+  resultUrl?: string;
+  reason?: string;
+};
+
+async function reserveSubmission(jobId: string, lineNo: number): Promise<{ reserved: boolean; value: SubmissionRowState }> {
+  const ref = database.ref(`${queuePath}/${jobId}/submission/rows/${lineNo}`);
+  const attemptId = randomUUID();
+  const startedAt = now();
+  let reserved = false;
+  const result = await ref.transaction((value) => {
+    const current = value as SubmissionRowState | null;
+    if (current?.state) return;
+    reserved = true;
+    return { state: "SUBMITTING", attemptId, startedAt } satisfies SubmissionRowState;
+  }, undefined, false);
+  const value = result.snapshot.val() as SubmissionRowState | null;
+  if (!value) throw new Error("주문 제출 잠금 상태를 저장하지 못했습니다.");
+  return { reserved, value };
+}
+
+async function reserveTrustedSubmissionRequest(requestId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const token = process.env.GITHUB_TOKEN ?? "";
+  const repository = process.env.GITHUB_REPOSITORY ?? "";
+  if (!token || !repository) return { ok: false, reason: "서버의 중복 주문 방지 저장소가 설정되지 않았습니다." };
+  const variableName = "USED_SUBMISSION_REQUESTS";
+  const baseUrl = `https://api.github.com/repos/${repository}/actions/variables`;
+  const headers = {
+    Accept: "application/vnd.github+json",
+    Authorization: `Bearer ${token}`,
+    "X-GitHub-Api-Version": "2022-11-28",
+    "Content-Type": "application/json",
+    "User-Agent": "membership-order-worker",
+  };
+  const existing = await fetch(`${baseUrl}/${variableName}`, { headers });
+  let used: string[] = [];
+  if (existing.ok) {
+    const payload = await existing.json() as { value?: string };
+    try {
+      const parsed = JSON.parse(payload.value ?? "[]") as unknown;
+      used = Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+    } catch {
+      return { ok: false, reason: "서버의 중복 주문 방지 기록 형식이 올바르지 않습니다." };
+    }
+  } else if (existing.status !== 404) {
+    return { ok: false, reason: `서버의 중복 주문 방지 기록을 읽지 못했습니다 (${existing.status}).` };
+  }
+  if (used.includes(requestId)) {
+    return { ok: false, reason: "이미 사용된 최종 승인 요청입니다. 중복 주문 방지를 위해 다시 제출하지 않았습니다." };
+  }
+  const value = JSON.stringify([...used.slice(-499), requestId]);
+  const saved = existing.status === 404
+    ? await fetch(baseUrl, { method: "POST", headers, body: JSON.stringify({ name: variableName, value }) })
+    : await fetch(`${baseUrl}/${variableName}`, { method: "PATCH", headers, body: JSON.stringify({ name: variableName, value }) });
+  if (!saved.ok) return { ok: false, reason: `서버의 중복 주문 방지 기록을 저장하지 못했습니다 (${saved.status}).` };
+  return { ok: true };
+}
+
+async function submitEroumOrder(page: Page, jobId: string, lineNo: number, requestId: string): Promise<{ ok: true; orderNumber: string; submittedAt: string } | { ok: false; reason: string }> {
+  const form = page.locator("#simple_order");
+  const candidates = form.locator('button[type="submit"]:visible, input[type="submit"]:visible');
+  let finalButton = candidates.nth(-1);
+  for (let index = 0; index < await candidates.count(); index += 1) {
+    const candidate = candidates.nth(index);
+    const label = normalizeSpaces((await candidate.getAttribute("value")) ?? (await candidate.innerText().catch(() => "")));
+    if (/주문|결제|확정/.test(label)) {
+      finalButton = candidate;
+      break;
+    }
+  }
+  if (await candidates.count() === 0 || !(await finalButton.count())) {
+    return { ok: false, reason: "이로움 주문서에서 최종 주문 버튼을 찾지 못했습니다. 실제 주문은 실행하지 않았습니다." };
+  }
+
+  const trustedReservation = await reserveTrustedSubmissionRequest(requestId);
+  if (!trustedReservation.ok) return trustedReservation;
+  const reservation = await reserveSubmission(jobId, lineNo);
+  if (!reservation.reserved) {
+    if (reservation.value.state === "SUBMITTED" && reservation.value.orderNumber && reservation.value.submittedAt) {
+      return { ok: true, orderNumber: reservation.value.orderNumber, submittedAt: reservation.value.submittedAt };
+    }
+    return { ok: false, reason: "이 주문은 이전 제출 시도가 완료되지 않았거나 결과 확인이 필요합니다. 중복 주문 방지를 위해 자동 재시도하지 않았습니다." };
+  }
+
+  const submissionRef = database.ref(`${queuePath}/${jobId}/submission/rows/${lineNo}`);
+  const candidateOrderNumber = new URL(page.url()).searchParams.get("od_id") ?? "";
+  try {
+    page.once("dialog", (dialog) => dialog.accept());
+    const beforeUrl = page.url();
+    await finalButton.click();
+    await page.waitForLoadState("domcontentloaded", { timeout: 30_000 }).catch(() => undefined);
+    const afterUrl = page.url();
+    const formStillPresent = await page.locator("#simple_order").count() > 0;
+    const bodyText = normalizeSpaces(await page.locator("body").innerText());
+    const successText = /주문(?:이|이 정상적으로)?\s*(?:완료|접수)|주문\s*번호/.test(bodyText);
+    if ((afterUrl === beforeUrl && formStillPresent) || (!successText && formStillPresent)) {
+      const reason = "최종 버튼 실행 후 주문 완료 화면을 확인하지 못했습니다. 이로움 주문관리에서 주문번호를 확인하기 전에는 재실행하지 마세요.";
+      await submissionRef.update({ state: "UNKNOWN", reason, resultUrl: afterUrl });
+      return { ok: false, reason };
+    }
+    const bodyOrderNumber = bodyText.match(/주문\s*번호\s*[:：]?\s*([A-Za-z0-9-]{8,})/)?.[1] ?? "";
+    const orderNumber = bodyOrderNumber || new URL(afterUrl).searchParams.get("od_id") || candidateOrderNumber;
+    if (!orderNumber) {
+      const reason = "주문 완료 화면은 확인했지만 주문번호를 읽지 못했습니다. 이로움 주문관리에서 확인이 필요합니다.";
+      await submissionRef.update({ state: "UNKNOWN", reason, resultUrl: afterUrl });
+      return { ok: false, reason };
+    }
+    const submittedAt = now();
+    await submissionRef.update({ state: "SUBMITTED", submittedAt, orderNumber, resultUrl: afterUrl });
+    return { ok: true, orderNumber, submittedAt };
+  } catch (error) {
+    const reason = `최종 제출 중 결과가 불명확해졌습니다: ${error instanceof Error ? error.message : "알 수 없는 오류"}. 중복 주문 방지를 위해 자동 재시도하지 않습니다.`;
+    await submissionRef.update({ state: "UNKNOWN", reason, resultUrl: page.url() }).catch(() => undefined);
+    return { ok: false, reason };
+  }
+}
+
+async function prepareEroumRow(page: Page, row: OrderRow, index: number, jobId: string, submitApproved: boolean, submissionRequestId: string): Promise<WorkerDetail> {
   const lineNo = row.lineNo ?? index + 1;
   if (row.status !== "READY") {
     return { lineNo, status: "HOLD", reason: row.reason || "대시보드 검증에서 확인 대상으로 분류되었습니다." };
@@ -367,7 +508,7 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
     .map(formatShippingNote);
 
   const shippingFee = Number(await page.locator("#od_send_cost").inputValue());
-  return {
+  const preparedDetail: WorkerDetail = {
     lineNo,
     status: "READY",
     reason: `상품${optionLabel ? `·옵션(${optionLabel})` : ""}·수량·배송지 입력 검증 완료. 최종 주문은 제출하지 않았습니다.${shippingNotes.length ? ` 출고 확인 필요: ${shippingNotes.join(" / ")}` : ""}`,
@@ -379,15 +520,57 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number): Promis
     orderFormUrl: page.url(),
     shippingNotes,
   };
+  if (!submitApproved) return preparedDetail;
+
+  const submitted = await submitEroumOrder(page, jobId, lineNo, submissionRequestId);
+  if (!submitted.ok) {
+    return { ...preparedDetail, status: "HOLD", reason: submitted.reason };
+  }
+  return {
+    ...preparedDetail,
+    reason: `이로움 주문 제출 완료. 주문번호 ${submitted.orderNumber}.${shippingNotes.length ? ` 출고 확인 필요: ${shippingNotes.join(" / ")}` : ""}`,
+    orderNumber: submitted.orderNumber,
+    submittedAt: submitted.submittedAt,
+  };
 }
 
 async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerReport> {
   const startedAt = now();
   const rows = job.rows ?? [];
+  const submitMode = job.executionMode === "SUBMIT";
+  const approvalKey = process.env.FINAL_SUBMISSION_APPROVAL_KEY ?? "";
+  const approvalMaterial = `${job.id}:${job.dashboardReview?.submissionRequestId ?? ""}:${approvalKey}`;
+  const expectedProof = createHash("sha256").update(approvalMaterial).digest("hex");
+  const suppliedProof = job.dashboardReview?.approvalProof ?? "";
+  const finalApprovedAt = Date.parse(job.dashboardReview?.finalSubmissionApprovedAt ?? "");
+  const finalApprovalFresh = Number.isFinite(finalApprovedAt) && Date.now() - finalApprovedAt <= 30 * 60 * 1000;
+  const approvalProofValid =
+    expectedProof.length === suppliedProof.length &&
+    timingSafeEqual(Buffer.from(expectedProof), Buffer.from(suppliedProof));
+  const submitApproved =
+    submitMode &&
+    rows.length === 1 &&
+    approvalKey.length >= 12 &&
+    approvalProofValid &&
+    job.dashboardReview?.decision === "ACCEPTED" &&
+    job.dashboardReview?.finalSubmissionApproved === true &&
+    finalApprovalFresh &&
+    Boolean(job.dashboardReview?.submissionRequestId);
   const serialized = process.env.EROUM_STORAGE_STATE_JSON;
   const details: WorkerDetail[] = [];
 
-  if (!serialized) {
+  if (submitMode && !submitApproved) {
+    const reason = rows.length !== 1
+      ? "현재 실제 주문 확정은 안전 검증을 위해 한 번에 1행만 지원합니다. 주문을 나눠서 처리해 주세요."
+      : approvalKey.length < 12
+        ? "서버에 최종 주문 승인 코드가 설정되지 않았습니다."
+        : !approvalProofValid
+          ? "최종 승인 코드가 올바르지 않습니다. 실제 주문은 실행하지 않았습니다."
+          : !finalApprovalFresh
+            ? "최종 주문 승인이 30분을 지나 만료되었습니다. 최신 준비 결과를 다시 확인해 주세요."
+          : "운영 페이지의 검토 수락과 최종 주문 확정 승인을 모두 확인하지 못했습니다.";
+    for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason });
+  } else if (!serialized) {
     for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason: "서버에 이로움 로그인 세션이 설정되지 않았습니다." });
   } else {
     let storageState: NonNullable<Parameters<Browser["newContext"]>[0]>["storageState"];
@@ -408,9 +591,9 @@ async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerRep
             continue;
           }
           try {
-            details.push(await prepareEroumRow(page, row, index));
+            details.push(await prepareEroumRow(page, row, index, job.id, submitApproved, job.dashboardReview?.submissionRequestId ?? ""));
           } catch (error) {
-            details.push({ lineNo: row.lineNo ?? index + 1, status: "FAILED", reason: `이로움 주문서 준비 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}` });
+            details.push({ lineNo: row.lineNo ?? index + 1, status: "FAILED", reason: `이로움 주문 처리 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}` });
           }
         }
       } finally {
@@ -423,6 +606,8 @@ async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerRep
   const failedRows = details.filter((entry) => entry.status === "FAILED").length;
   const holdRows = details.filter((entry) => entry.status === "HOLD").length;
   const shippingNoticeRows = details.filter((entry) => (entry.shippingNotes?.length ?? 0) > 0).length;
+  const submittedRows = details.filter((entry) => Boolean(entry.orderNumber && entry.submittedAt)).length;
+  const completed = submitMode && rows.length > 0 && submittedRows === rows.length && failedRows === 0 && holdRows === 0;
   return {
     workerId,
     startedAt,
@@ -432,8 +617,9 @@ async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerRep
     failedRows,
     holdRows,
     shippingNoticeRows,
-    reviewState: failedRows || holdRows ? "BLOCKED" : "WAITING_FOR_DASHBOARD",
-    canSubmit: false,
+    submittedRows,
+    reviewState: failedRows || holdRows ? "BLOCKED" : completed ? "COMPLETED" : "WAITING_FOR_DASHBOARD",
+    canSubmit: !submitMode && rows.length === 1 && successRows === rows.length && failedRows === 0 && holdRows === 0,
     details,
   };
 }
@@ -443,7 +629,7 @@ async function runOnce() {
   const recent = await database.ref(queuePath).orderByKey().limitToLast(100).get();
   const queuedIds: string[] = [];
   recent.forEach((child) => {
-    if ((child.val() as { status?: string } | null)?.status === "QUEUED") queuedIds.push(child.key as string);
+    if (["QUEUED", "SUBMIT_QUEUED"].includes((child.val() as { status?: string } | null)?.status ?? "")) queuedIds.push(child.key as string);
     return false;
   });
   console.log(`::notice title=주문 워커::큐 조회 ${recent.numChildren()}건 중 실행 대기 ${queuedIds.length}건`);
@@ -462,20 +648,33 @@ async function runOnce() {
       }
       try {
         const report = await prepareReport(job, browser);
+        const submitMode = job.executionMode === "SUBMIT";
+        const completed = submitMode && report.submittedRows === report.totalRows && report.failedRows === 0 && report.holdRows === 0;
+        const nextStatus = report.failedRows || report.holdRows ? "HOLD" : completed ? "COMPLETED" : "AWAITING_REVIEW";
         const auditKey = database.ref(`${queuePath}/${jobId}/auditLogs`).push().key ?? randomUUID();
         await database.ref(`${queuePath}/${jobId}`).update({
-          status: report.failedRows || report.holdRows ? "HOLD" : "AWAITING_REVIEW",
+          status: nextStatus,
           updatedAt: report.finishedAt,
           workerId,
           report,
-          dashboardReview: { state: report.reviewState, required: true, finalSubmissionApproved: false, updatedAt: report.finishedAt },
+          dashboardReview: submitMode
+            ? {
+                ...job.dashboardReview,
+                state: report.reviewState,
+                required: !completed,
+                finalSubmissionApproved: true,
+                updatedAt: report.finishedAt,
+              }
+            : { state: report.reviewState, required: true, finalSubmissionApproved: false, updatedAt: report.finishedAt },
           [`auditLogs/${auditKey}`]: {
             id: auditKey,
             jobId,
-            action: "BACKGROUND_RUN_FINISHED",
+            action: submitMode ? "FINAL_SUBMISSION_FINISHED" : "BACKGROUND_RUN_FINISHED",
             actorName: "서버 자동화 워커",
             actorEmail: "",
-            detail: `총 ${report.totalRows}건 · 성공 ${report.successRows}건 · 실패 ${report.failedRows}건 · 보류 ${report.holdRows}건 · 출고 확인 필요 ${report.shippingNoticeRows}건 · 최종 주문 미실행`,
+            detail: submitMode
+              ? `실제 주문 확정 · 총 ${report.totalRows}건 · 제출 완료 ${report.submittedRows}건 · 실패 ${report.failedRows}건 · 보류 ${report.holdRows}건`
+              : `총 ${report.totalRows}건 · 성공 ${report.successRows}건 · 실패 ${report.failedRows}건 · 보류 ${report.holdRows}건 · 출고 확인 필요 ${report.shippingNoticeRows}건 · 최종 주문 미실행`,
             createdAt: report.finishedAt,
           },
         });

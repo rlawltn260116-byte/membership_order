@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -38,6 +39,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { createOrderJob, getOrderJob, listOrderJobs, updateOrderJob } from "@/lib/firebase-order-ops";
 
 type OrderRow = {
@@ -75,6 +87,7 @@ type Job = {
   updatedByEmail: string;
   createdAt: string;
   updatedAt: string;
+  executionMode?: "PREPARE" | "SUBMIT";
   rows?: OrderRow[];
   auditLogs?: AuditLog[] | Record<string, AuditLog>;
   report?: {
@@ -86,8 +99,9 @@ type Job = {
     failedRows: number;
     holdRows: number;
     shippingNoticeRows?: number;
-    reviewState: "WAITING_FOR_DASHBOARD" | "BLOCKED";
-    canSubmit: false;
+    reviewState: "WAITING_FOR_DASHBOARD" | "BLOCKED" | "COMPLETED";
+    canSubmit: boolean;
+    submittedRows?: number;
     details: Array<{
       lineNo: number;
       status: "READY" | "FAILED" | "HOLD";
@@ -98,16 +112,21 @@ type Job = {
       shippingFee?: number;
       totalPrice?: number;
       shippingNotes?: string[];
+      orderNumber?: string;
+      submittedAt?: string;
     }>;
   };
   dashboardReview?: {
-    state: "WAITING_FOR_DASHBOARD" | "BLOCKED" | "ACCEPTED" | "ON_HOLD";
+    state: "QUEUED" | "WAITING_FOR_DASHBOARD" | "BLOCKED" | "ACCEPTED" | "ON_HOLD" | "FINAL_SUBMISSION_APPROVED" | "COMPLETED";
     required: boolean;
     finalSubmissionApproved: boolean;
     updatedAt: string;
     reviewedByName?: string;
     decision?: "ACCEPTED" | "ON_HOLD";
     note?: string;
+    finalSubmissionApprovedAt?: string;
+    submissionRequestId?: string;
+    approvalProof?: string;
   };
   dashboardApproval?: {
     approved: boolean;
@@ -729,7 +748,18 @@ export default function OrderOpsApp() {
     if (!activeJob) return;
     setLoading(true);
     try {
-      await updateOrderJob(activeJob.id, { status: "QUEUED", updatedAt: new Date().toISOString() });
+      const queuedAt = new Date().toISOString();
+      await updateOrderJob(activeJob.id, {
+        status: "QUEUED",
+        executionMode: "PREPARE",
+        dashboardReview: {
+          state: "QUEUED",
+          required: true,
+          finalSubmissionApproved: false,
+          updatedAt: queuedAt,
+        },
+        updatedAt: queuedAt,
+      });
       setMessage("서버 준비 요청을 등록했습니다. 준비 결과는 이 페이지의 검토 탭에서 확인합니다.");
       await loadJobs();
       await openJob(activeJob.id);
@@ -741,7 +771,7 @@ export default function OrderOpsApp() {
   }
 
   async function reviewWorkerResult(decision: "ACCEPTED" | "ON_HOLD", note = "") {
-    if (!activeJob?.report) return;
+    if (!activeJob?.report || activeJob.status !== "AWAITING_REVIEW") return;
     setLoading(true);
     const reviewedAt = new Date().toISOString();
     try {
@@ -763,6 +793,51 @@ export default function OrderOpsApp() {
       await openJob(activeJob.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "검토 결과 저장 오류");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function queueFinalSubmission(approvalCode: string) {
+    if (!activeJob?.report || activeJob.status !== "REVIEWED" || activeJob.dashboardReview?.decision !== "ACCEPTED") return;
+    if (activeJob.report.failedRows > 0 || activeJob.report.holdRows > 0 || activeJob.report.successRows !== activeJob.report.totalRows) return;
+    setLoading(true);
+    const approvedAt = new Date().toISOString();
+    const requestId = window.crypto.randomUUID();
+    const auditId = `${Date.now()}-submit-approved`;
+    try {
+      const proofBytes = new TextEncoder().encode(`${activeJob.id}:${requestId}:${approvalCode}`);
+      const proofBuffer = await window.crypto.subtle.digest("SHA-256", proofBytes);
+      const approvalProof = Array.from(new Uint8Array(proofBuffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      await updateOrderJob(activeJob.id, {
+        status: "SUBMIT_QUEUED",
+        executionMode: "SUBMIT",
+        dashboardReview: {
+          ...activeJob.dashboardReview,
+          state: "FINAL_SUBMISSION_APPROVED",
+          required: false,
+          finalSubmissionApproved: true,
+          finalSubmissionApprovedAt: approvedAt,
+          submissionRequestId: requestId,
+          approvalProof,
+          updatedAt: approvedAt,
+        },
+        [`auditLogs/${auditId}`]: {
+          id: auditId,
+          jobId: activeJob.id,
+          action: "FINAL_SUBMISSION_APPROVED",
+          actorName: "주문 운영자",
+          actorEmail: "",
+          detail: `이로움 실제 주문 확정 ${activeJob.report.totalRows}건을 승인했습니다. 요청번호 ${requestId}`,
+          createdAt: approvedAt,
+        },
+        updatedAt: approvedAt,
+      });
+      setMessage("실제 주문 확정 요청을 등록했습니다. 서버가 배송정보를 다시 검증한 뒤 이로움 주문을 제출합니다.");
+      await loadJobs();
+      await openJob(activeJob.id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "주문 확정 요청 저장 오류");
     } finally {
       setLoading(false);
     }
@@ -951,7 +1026,12 @@ export default function OrderOpsApp() {
                 {rows.length ? <OrderTable rows={rows} /> : <EmptyState />}
               </TabsContent>
               <TabsContent value="review" className="mt-4">
-                <WorkerReviewPanel job={activeJob} loading={loading} onDecision={(decision) => void reviewWorkerResult(decision)} />
+                <WorkerReviewPanel
+                  job={activeJob}
+                  loading={loading}
+                  onDecision={(decision) => void reviewWorkerResult(decision)}
+                  onFinalSubmit={(approvalCode) => void queueFinalSubmission(approvalCode)}
+                />
               </TabsContent>
               <TabsContent value="policy" className="mt-4">
                 <div className="grid gap-3 md:grid-cols-3">
@@ -1037,11 +1117,30 @@ function WorkerReviewPanel({
   job,
   loading,
   onDecision,
+  onFinalSubmit,
 }: {
   job: Job | null;
   loading: boolean;
   onDecision: (decision: "ACCEPTED" | "ON_HOLD") => void;
+  onFinalSubmit: (approvalCode: string) => void;
 }) {
+  const [approvalCode, setApprovalCode] = useState("");
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setCurrentTime(Date.now()), 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  if (job && ["QUEUED", "RUNNING", "SUBMIT_QUEUED"].includes(job.status)) {
+    return (
+      <EmptyPanel
+        title={job.executionMode === "SUBMIT" ? "실제 주문 확정을 처리하고 있습니다" : "서버가 주문을 준비하고 있습니다"}
+        text={job.executionMode === "SUBMIT"
+          ? "배송정보와 상품을 다시 확인한 뒤 이로움에 주문을 제출합니다. 이전 준비 결과는 새 실행이 끝나면 교체됩니다."
+          : "이전 결과는 새 실행의 승인에 사용할 수 없습니다. 처리가 끝나면 이 화면에 최신 결과가 표시됩니다."}
+      />
+    );
+  }
+
   if (!job?.report) {
     return (
       <EmptyPanel
@@ -1053,7 +1152,20 @@ function WorkerReviewPanel({
 
   const report = job.report;
   const review = job.dashboardReview;
-  const alreadyReviewed = review?.state === "ACCEPTED" || review?.state === "ON_HOLD";
+  const alreadyReviewed = ["ACCEPTED", "ON_HOLD", "FINAL_SUBMISSION_APPROVED", "COMPLETED"].includes(review?.state ?? "");
+  const reportFinishedAt = Date.parse(report.finishedAt);
+  const reportIsFresh = Number.isFinite(reportFinishedAt) && currentTime - reportFinishedAt <= 30 * 60 * 1000;
+  const submissionEligible =
+    job.status === "REVIEWED" &&
+    review?.decision === "ACCEPTED" &&
+    report.canSubmit === true &&
+    reportIsFresh &&
+    report.totalRows === 1 &&
+    report.successRows === report.totalRows &&
+    report.failedRows === 0 &&
+    report.holdRows === 0;
+  const submissionInProgress = job.status === "SUBMIT_QUEUED" || (job.status === "RUNNING" && job.executionMode === "SUBMIT");
+  const submissionCompleted = job.status === "COMPLETED";
   const shippingRows = report.details
     .filter((detail) => (detail.shippingNotes?.length ?? 0) > 0)
     .map((detail) => ({ detail, row: job.rows?.find((candidate) => candidate.lineNo === detail.lineNo) }));
@@ -1112,12 +1224,16 @@ function WorkerReviewPanel({
             <h3 className="font-semibold">서버 처리 상세</h3>
             <p className="mt-1 text-sm text-slate-600">실행기 {report.workerId} · 시작 {formatDateTime(report.startedAt)} · 종료 {formatDateTime(report.finishedAt)}</p>
             <p className="mt-1 text-sm text-slate-700">
-              {report.canSubmit ? "제출 가능" : "서버는 주문을 제출하지 않았습니다. 최종 확정은 운영 페이지의 별도 승인 단계에서 진행합니다."}
+              {submissionCompleted
+                ? `이로움 주문 제출 완료${report.submittedRows ? ` · ${report.submittedRows}건` : ""}`
+                : submissionInProgress
+                  ? "운영자가 승인한 실제 주문 확정을 서버가 처리하고 있습니다."
+                  : "서버는 아직 주문을 제출하지 않았습니다. 검토 수락 후 아래 주문 확정 버튼으로 별도 승인합니다."}
             </p>
           </div>
           {alreadyReviewed ? (
-            <Badge className={review?.state === "ACCEPTED" ? statusClass("REVIEWED") : statusClass("HOLD")}>
-              {review?.state === "ACCEPTED" ? "운영자 수락 완료" : "운영자 보류"}
+            <Badge className={review?.state === "ON_HOLD" ? statusClass("HOLD") : statusClass("REVIEWED")}>
+              {review?.state === "ON_HOLD" ? "운영자 보류" : submissionCompleted ? "주문 확정 완료" : "운영자 수락 완료"}
             </Badge>
           ) : (
             <div className="flex gap-2">
@@ -1146,7 +1262,11 @@ function WorkerReviewPanel({
                   <TableRow key={`${detail.lineNo}-${index}`}>
                     <TableCell>{detail.lineNo}</TableCell>
                     <TableCell><Badge className={statusClass(detail.status)}>{statusLabel(detail.status)}</Badge></TableCell>
-                    <TableCell className="whitespace-normal">{detail.reason}</TableCell>
+                    <TableCell className="whitespace-normal">
+                      {detail.reason}
+                      {detail.orderNumber ? <div className="mt-1 font-semibold text-emerald-700">주문번호 {detail.orderNumber}</div> : null}
+                      {detail.submittedAt ? <div className="mt-1 text-xs text-slate-500">제출 {formatDateTime(detail.submittedAt)}</div> : null}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -1159,9 +1279,71 @@ function WorkerReviewPanel({
           <p className="mt-3 text-xs text-slate-500">{review.reviewedByName || "주문 운영자"} · {formatDateTime(review.updatedAt)} {review.note ? `· ${review.note}` : ""}</p>
         ) : null}
       </div>
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-slate-700">
-        검토 수락은 서버 준비 결과를 확인했다는 기록입니다. 실제 주문 확정 승인은 이 검토와 구분해 주문 운영 페이지에서 별도로 처리합니다.
-      </div>
+      {submissionEligible ? (
+        <div className="flex flex-col gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="font-semibold text-rose-950">실제 주문 확정</h3>
+            <p className="mt-1 text-sm leading-6 text-rose-900/80">
+              누르면 서버가 상품과 배송정보를 다시 검증한 뒤 이로움에 실제 주문을 제출합니다.
+            </p>
+          </div>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button className="bg-rose-700 text-white hover:bg-rose-800" disabled={loading}>
+                <ShieldCheck className="h-4 w-4" />
+                주문 확정
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>이로움 주문 {report.totalRows}건을 실제로 확정할까요?</AlertDialogTitle>
+                <AlertDialogDescription className="leading-6">
+                  확인을 누르면 서버가 이로움의 최종 주문하기 버튼을 실행합니다. 주문번호가 생성된 뒤에는 이 페이지에서 자동 취소되지 않습니다.
+                </AlertDialogDescription>
+                <div className="mt-3 w-full">
+                  <label className="text-sm font-medium text-slate-900" htmlFor="final-approval-code">최종 승인 코드</label>
+                  <Input
+                    id="final-approval-code"
+                    type="password"
+                    autoComplete="off"
+                    className="mt-2"
+                    value={approvalCode}
+                    onChange={(event) => setApprovalCode(event.target.value)}
+                    placeholder="승인 코드를 입력하세요"
+                  />
+                </div>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>취소</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-rose-700 text-white hover:bg-rose-800"
+                  disabled={!approvalCode.trim()}
+                  onClick={() => {
+                    onFinalSubmit(approvalCode.trim());
+                    setApprovalCode("");
+                  }}
+                >
+                  실제 주문 확정
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      ) : submissionInProgress ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+          실제 주문 확정 요청이 등록되었습니다. 중복 주문을 막기 위해 처리 중에는 다시 요청할 수 없습니다.
+        </div>
+      ) : submissionCompleted ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-900">
+          실제 주문 제출이 완료되었습니다. 위 처리 상세에서 주문번호와 행별 결과를 확인하세요.
+        </div>
+      ) : (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-slate-700">
+          {job.status === "REVIEWED" && (!report.canSubmit || !reportIsFresh)
+            ? "주문 확정 전 최신 서버 검증이 필요합니다. 서버 준비 요청을 다시 실행한 뒤 새 결과를 검토해 주세요."
+            : "검토 수락은 서버 준비 결과를 확인했다는 기록입니다. 성공한 1행 작업 전체를 수락하면 실제 주문 확정 버튼이 표시됩니다."}
+        </div>
+      )}
     </div>
   );
 }
@@ -1206,6 +1388,9 @@ function AuditLogItem({ log }: { log: AuditLog }) {
 function auditActionLabel(action: string) {
   if (action === "ORDER_CREATED") return "주문 접수";
   if (action === "STATUS_CHANGED") return "상태 변경";
+  if (action === "BACKGROUND_RUN_FINISHED") return "주문 준비 완료";
+  if (action === "FINAL_SUBMISSION_APPROVED") return "최종 주문 승인";
+  if (action === "FINAL_SUBMISSION_FINISHED") return "최종 주문 결과";
   return action;
 }
 
