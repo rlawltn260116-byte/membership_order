@@ -51,7 +51,7 @@ export async function POST(request: Request) {
       filename?: string;
       rows?: IncomingRow[];
     };
-    const filename = payload.filename?.trim() || "orders.csv";
+    const filename = payload.filename?.trim() || "orders.xlsx";
     const rows = payload.rows ?? [];
     const sourceSystem = rows.find((row) => row.sourceSystem)?.sourceSystem || "미지정";
 

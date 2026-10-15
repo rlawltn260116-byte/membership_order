@@ -177,9 +177,24 @@ const requiredColumns = [
   "address",
 ];
 
-const sampleCsv =
-  "source_system,order_id,category,product_name,quantity,expected_price,customer_name,recipient_name,recipient_phone,zipcode,address,address_detail,memo\n" +
-  "이로움,TEST-001,급여판매,Handy,1,108000,우리케어,홍길동,010-0000-0000,12345,서울시 금천구 서부샛길 606,101호,샘플";
+const sampleOrderRows = [
+  {
+    source_system: "이로움",
+    order_id: "TEST-001",
+    category: "급여판매",
+    product_name: "Handy",
+    option: "",
+    quantity: 1,
+    expected_price: 108000,
+    customer_name: "우리케어",
+    recipient_name: "홍길동",
+    recipient_phone: "010-0000-0000",
+    zipcode: "12345",
+    address: "서울시 금천구 서부샛길 606",
+    address_detail: "101호",
+    memo: "샘플",
+  },
+];
 
 const appSections: {
   id: PageMode;
@@ -226,42 +241,150 @@ function normalizeHeader(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, "_");
 }
 
-function splitCsvLine(line: string) {
-  const result: string[] = [];
-  let current = "";
-  let quoted = false;
+const thkcHeaderAliases: Record<string, string> = {
+  주문번호: "order_id",
+  납품처: "destination",
+  출고처: "destination",
+  납품처전화번호: "recipient_phone",
+  출고처전화번호: "recipient_phone",
+  품명: "product_name",
+  품목: "product_name",
+  주문수량: "quantity",
+  "비고(내역)": "memo",
+  "비고(업체)": "memo",
+};
 
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
-    const next = line[i + 1];
-    if (char === '"' && quoted && next === '"') {
-      current += '"';
-      i += 1;
-    } else if (char === '"') {
-      quoted = !quoted;
-    } else if (char === "," && !quoted) {
-      result.push(current.trim());
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-  result.push(current.trim());
-  return result;
+function workbookText(value: unknown) {
+  return value == null ? "" : String(value).normalize("NFKC").replace(/\s+/g, " ").trim();
 }
 
-function parseCsv(text: string) {
-  const lines = text
-    .replace(/^\uFEFF/, "")
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0);
-  if (lines.length < 2) throw new Error("주문 행이 없습니다.");
+function compactHeader(value: unknown) {
+  return workbookText(value).replace(/\s+/g, "");
+}
 
-  const headers = splitCsvLine(lines[0]).map(normalizeHeader);
-  return lines.slice(1).map((line) => {
-    const values = splitCsvLine(line);
-    return Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
+function splitThkcDestination(value: string) {
+  const lastUnderscore = value.lastIndexOf("_");
+  if (lastUnderscore >= 0) {
+    return {
+      address: value.slice(0, lastUnderscore).trim(),
+      recipientName: value.slice(lastUnderscore + 1).trim(),
+    };
+  }
+  const slash = value.match(/\s+\/\s*([^/]+)$/);
+  if (slash?.index != null) {
+    return { address: value.slice(0, slash.index).trim(), recipientName: slash[1].trim() };
+  }
+  return { address: value, recipientName: "" };
+}
+
+function splitThkcProduct(value: string) {
+  let depth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "(") depth += 1;
+    else if (character === ")" && depth > 0) depth -= 1;
+    else if (character === "/" && depth === 0) {
+      return { productName: value.slice(0, index).trim(), option: value.slice(index + 1).trim() };
+    }
+  }
+  const compactOption = value.match(/^(DA-006)\((초록|회색)\)$/);
+  if (compactOption) return { productName: compactOption[1], option: compactOption[2] };
+  return { productName: value, option: "" };
+}
+
+function parseGenericWorkbookRows(matrix: unknown[][]) {
+  const headerIndex = matrix.slice(0, 25).findIndex((row) => {
+    const headers = row.map((value) => normalizeHeader(workbookText(value)));
+    return headers.includes("order_id") && headers.includes("product_name") && headers.includes("quantity");
   });
+  if (headerIndex < 0) return [];
+  const headers = matrix[headerIndex].map((value) => normalizeHeader(workbookText(value)));
+  return matrix
+    .slice(headerIndex + 1)
+    .map((row, index) => ({
+      ...Object.fromEntries(headers.map((header, column) => [header, workbookText(row[column])])),
+      __line_no: headerIndex + index + 2,
+    }))
+    .filter((row) => Object.entries(row).some(([key, value]) => key !== "__line_no" && workbookText(value)));
+}
+
+function parseThkcWorkbookRows(matrix: unknown[][]) {
+  const headerBlocks = new Map<number, Record<string, number>>();
+  matrix.slice(0, 25).forEach((row, rowIndex) => {
+    const mapping: Record<string, number> = {};
+    row.forEach((value, column) => {
+      const canonical = thkcHeaderAliases[compactHeader(value)];
+      if (canonical) mapping[canonical] = column;
+    });
+    if (["destination", "recipient_phone", "product_name", "quantity"].every((key) => mapping[key] != null)) {
+      headerBlocks.set(rowIndex, mapping);
+    }
+  });
+  if (headerBlocks.size === 0) return [];
+
+  const parsed: Array<Record<string, unknown>> = [];
+  let activeMapping: Record<string, number> | null = null;
+  matrix.forEach((row, rowIndex) => {
+    const nextMapping = headerBlocks.get(rowIndex);
+    if (nextMapping) {
+      activeMapping = nextMapping;
+      return;
+    }
+    if (!activeMapping) return;
+    const value = (key: string) => workbookText(row[activeMapping?.[key] ?? -1]);
+    const orderId = value("order_id");
+    const destination = value("destination");
+    const phone = value("recipient_phone");
+    const product = value("product_name");
+    const quantity = value("quantity");
+    const memo = value("memo");
+    if (![orderId, destination, phone, product, quantity].some(Boolean)) return;
+    const { address, recipientName } = splitThkcDestination(destination);
+    const splitProduct = splitThkcProduct(product);
+    parsed.push({
+      __line_no: rowIndex + 1,
+      source_system: "이로움",
+      order_id: orderId,
+      category: "급여판매",
+      product_name: splitProduct.productName,
+      option: splitProduct.option,
+      quantity,
+      expected_price: "",
+      customer_name: "티에이치케이컴퍼니",
+      recipient_name: recipientName,
+      recipient_phone: phone,
+      zipcode: "",
+      address,
+      address_detail: "",
+      memo,
+    });
+  });
+  return parsed;
+}
+
+async function parseXlsx(file: File) {
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  await workbook.xlsx.load(bytes as unknown as Buffer);
+  const firstSheet = workbook.worksheets[0];
+  if (!firstSheet) throw new Error("엑셀 파일에 시트가 없습니다.");
+  const matrix: unknown[][] = [];
+  for (let rowNumber = 1; rowNumber <= firstSheet.rowCount; rowNumber += 1) {
+    const row = firstSheet.getRow(rowNumber);
+    const values: string[] = [];
+    for (let column = 1; column <= firstSheet.columnCount; column += 1) {
+      values.push(row.getCell(column).text);
+    }
+    matrix.push(values);
+  }
+  const rows = parseThkcWorkbookRows(matrix);
+  const parsed = rows.length ? rows : parseGenericWorkbookRows(matrix);
+  if (!parsed.length) {
+    throw new Error("지원되는 주문 열을 찾지 못했습니다. THKC 발주서 또는 주문 엑셀 양식을 확인해 주세요.");
+  }
+  if (parsed.length > 5000) throw new Error("한 파일에서 처리할 수 있는 주문은 최대 5,000건입니다.");
+  return parsed;
 }
 
 function cell(row: Record<string, unknown>, key: string) {
@@ -311,7 +434,7 @@ function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
   }
 
   return {
-    lineNo: index + 2,
+    lineNo: Number(cell(raw, "__line_no")) || index + 2,
     sourceSystem: cell(raw, "source_system") || cell(raw, "site") || cell(raw, "erp") || "미지정",
     orderId: cell(raw, "order_id"),
     category,
@@ -410,12 +533,21 @@ function downloadCsv(rows: OrderRow[], filename: string) {
   URL.revokeObjectURL(url);
 }
 
-function downloadSample() {
-  const blob = new Blob([`\uFEFF${sampleCsv}`], { type: "text/csv;charset=utf-8" });
+async function downloadSample() {
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("주문");
+  const headers = Object.keys(sampleOrderRows[0]);
+  worksheet.columns = headers.map((header) => ({ header, key: header, width: 18 }));
+  worksheet.addRows(sampleOrderRows);
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer as BlobPart], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "eroumcare_order_sample.csv";
+  link.download = "eroumcare_order_sample.xlsx";
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -424,7 +556,7 @@ const channelPlans = [
   { name: "이로움", type: "B2B몰", status: "연결 준비", rule: "급여/비급여 상품 검색, 장바구니 전 승인" },
   { name: "케어맥스", type: "B2B몰", status: "대기", rule: "상품코드 우선 매칭, 품절 시 보류" },
   { name: "Amaranth ERP", type: "ERP", status: "대기", rule: "거래처/품목/창고 코드 검증 후 전표 생성" },
-  { name: "수기 발주", type: "내부", status: "운영", rule: "CSV 업로드 후 담당자 승인" },
+  { name: "수기 발주", type: "내부", status: "운영", rule: "엑셀 업로드 후 담당자 승인" },
 ];
 
 const mappingExamples = [
@@ -474,7 +606,7 @@ const adminCards = [
 ];
 
 const approvalPolicies = [
-  { step: "CSV/엑셀 업로드", owner: "주문 운영자", approval: "불필요", log: "접수자 기록" },
+  { step: "엑셀 업로드", owner: "주문 운영자", approval: "불필요", log: "접수자 기록" },
   { step: "보류 사유 수정", owner: "주문 운영자", approval: "불필요", log: "수정자 기록" },
   { step: "B2B몰 장바구니 입력", owner: "승인 담당자", approval: "필요", log: "승인자 기록" },
   { step: "주문 확정/결제", owner: "최고 관리자", approval: "필수", log: "승인자와 처리자 기록" },
@@ -544,7 +676,7 @@ function OverviewPage({ jobs, onGo }: { jobs: Job[]; onGo: (mode: PageMode) => v
           <OverviewCard label="실패 포함" value={failed} />
         </div>
         <div className="mt-5 grid gap-3 lg:grid-cols-2">
-          <FlowCard title="접수" text="CSV·엑셀·ERP 내보내기 파일을 같은 주문 스키마로 정규화합니다." />
+          <FlowCard title="접수" text="엑셀·ERP 내보내기 파일을 같은 주문 스키마로 정규화합니다." />
           <FlowCard title="검증" text="거래처, 상품, 수량, 주소, 예상가, 채널별 필수값을 먼저 확인합니다." />
           <FlowCard title="실행" text="사이트 자동입력 또는 ERP 전표 생성은 승인 전 대기 상태로 분리합니다." />
           <FlowCard title="기록" text="작업자, 주문번호, 전표번호, 실패 사유, 보류 사유를 작업별로 남깁니다." />
@@ -698,14 +830,23 @@ export default function OrderOpsApp() {
     setMessage("");
     setFilename(file.name);
     setActiveJob(null);
-    if (!file.name.toLowerCase().endsWith(".csv")) {
-      setMessage("현재 온라인 초안은 CSV 업로드를 먼저 지원합니다. 엑셀은 CSV로 저장해서 올려주세요.");
+    setPreviewRows([]);
+    if (!file.name.toLowerCase().endsWith(".xlsx")) {
+      setMessage("주문 파일은 .xlsx 형식으로 올려주세요.");
       return;
     }
-    const rawRows = parseCsv(await file.text());
-    const parsed = rawRows.map(validateOrder);
-    setPreviewRows(parsed);
-    setMessage(`${parsed.length}건을 읽었습니다. 저장하면 다른 PC에서도 이어서 볼 수 있습니다.`);
+    if (file.size > 10 * 1024 * 1024) {
+      setMessage("엑셀 파일은 10MB 이하로 올려주세요.");
+      return;
+    }
+    try {
+      const rawRows = await parseXlsx(file);
+      const parsed = rawRows.map(validateOrder);
+      setPreviewRows(parsed);
+      setMessage(`${parsed.length}건을 읽었습니다. 저장하면 다른 PC에서도 이어서 볼 수 있습니다.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "엑셀 파일을 읽지 못했습니다.");
+    }
   }
 
   async function saveJob() {
@@ -876,13 +1017,13 @@ export default function OrderOpsApp() {
             </Button>
             <Button onClick={() => inputRef.current?.click()}>
               <Upload className="h-4 w-4" />
-              주문 CSV 업로드
+              주문 엑셀 업로드
             </Button>
             <input
               ref={inputRef}
               className="hidden"
               type="file"
-              accept=".csv"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (file) void handleFile(file);
@@ -2064,14 +2205,14 @@ function EmptyState() {
   return (
     <div className="flex min-h-[360px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
       <FileSpreadsheet className="mb-3 h-10 w-10 text-slate-400" />
-      <h3 className="font-semibold">주문 CSV를 업로드하세요</h3>
+      <h3 className="font-semibold">주문 엑셀을 업로드하세요</h3>
       <p className="mt-2 max-w-xl text-sm text-slate-600">
-        CSV 컬럼은 order_id, category, product_name, quantity, customer_name, recipient_name,
-        recipient_phone, address를 포함해야 합니다.
+        THKC 발주서(.xlsx)를 그대로 올릴 수 있습니다. 일반 주문 엑셀은 order_id, category,
+        product_name, quantity, customer_name, recipient_name, recipient_phone, address 열을 포함해야 합니다.
       </p>
-      <Button className="mt-4" variant="outline" onClick={downloadSample}>
+      <Button className="mt-4" variant="outline" onClick={() => void downloadSample()}>
         <Download className="h-4 w-4" />
-        샘플 CSV
+        샘플 엑셀
       </Button>
     </div>
   );
