@@ -26,6 +26,8 @@ import {
   ShieldCheck,
   Upload,
   UserRound,
+  Search,
+  ArrowRight,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -648,88 +650,75 @@ function buildCalendarDays(monthDate: Date, jobs: Job[]) {
   });
 }
 
-function OverviewPage({ jobs, onGo }: { jobs: Job[]; onGo: (mode: PageMode) => void }) {
-  const queued = jobs.filter((job) => job.status === "QUEUED").length;
-  const failed = jobs.filter((job) => job.status === "FAILED").length;
-  const ready = jobs.filter((job) => job.status === "READY").length;
-  const channels = new Set(jobs.map((job) => job.sourceSystem || "미지정")).size;
-
+function OverviewPage({ jobs, onOpenJob }: { jobs: Job[]; onOpenJob: (id: string) => void }) {
+  const columns = [
+    { title: "검토 필요", hint: "입력값과 예외를 확인하세요", color: "amber", statuses: ["HOLD", "FAILED"] },
+    { title: "승인·실행 대기", hint: "검증 결과를 확인하고 진행하세요", color: "indigo", statuses: ["READY", "QUEUED", "RUNNING", "AWAITING_REVIEW", "REVIEWED", "SUBMIT_QUEUED"] },
+    { title: "주문 완료", hint: "접수 결과와 주문번호를 확인하세요", color: "emerald", statuses: ["COMPLETED"] },
+  ];
   return (
-    <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="rounded-lg border border-slate-200 bg-white p-5">
-        <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">주문 운영 허브</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              사이트별 주문과 ERP 입력을 같은 흐름으로 접수, 검증, 실행, 기록합니다.
-            </p>
-          </div>
-          <Button onClick={() => onGo("orders")}>
-            <Upload className="h-4 w-4" />
-            새 주문 접수
-          </Button>
+    <div className="space-y-6">
+      <section className="rounded-2xl border border-slate-200/70 bg-white px-5 py-6">
+        <div className="grid grid-cols-5 gap-2">
+          {["발주 접수", "데이터 검증", "운영자 승인", "주문 실행", "결과 확인"].map((step, index) => (
+            <div key={step} className="relative text-center">
+              {index < 4 ? <div className="absolute left-[60%] right-[-40%] top-4 h-px bg-slate-200" /> : null}
+              <span className="relative mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-indigo-50 text-sm font-semibold text-indigo-600">{index + 1}</span>
+              <p className="mt-3 text-xs font-medium text-slate-700 sm:text-sm">{step}</p>
+            </div>
+          ))}
         </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
-          <OverviewCard label="연결 채널" value={channels || channelPlans.length} />
-          <OverviewCard label="검증 완료 작업" value={ready} />
-          <OverviewCard label="실행 대기" value={queued} />
-          <OverviewCard label="실패 포함" value={failed} />
-        </div>
-        <div className="mt-5 grid gap-3 lg:grid-cols-2">
-          <FlowCard title="접수" text="엑셀·ERP 내보내기 파일을 같은 주문 스키마로 정규화합니다." />
-          <FlowCard title="검증" text="거래처, 상품, 수량, 주소, 예상가, 채널별 필수값을 먼저 확인합니다." />
-          <FlowCard title="실행" text="사이트 자동입력 또는 ERP 전표 생성은 승인 전 대기 상태로 분리합니다." />
-          <FlowCard title="기록" text="작업자, 주문번호, 전표번호, 실패 사유, 보류 사유를 작업별로 남깁니다." />
-        </div>
-      </div>
-
-      <aside className="space-y-4">
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <h3 className="font-semibold">필요 화면</h3>
-          <div className="mt-3 space-y-2">
-            {appSections.slice(1).map((section) => (
-              <button
-                key={section.id}
-                className="flex w-full items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-left hover:border-[#0f766e] hover:bg-teal-50"
-                onClick={() => onGo(section.id)}
-              >
-                <span>
-                  <span className="block text-sm font-medium">{section.label}</span>
-                  <span className="text-xs text-slate-500">{section.description}</span>
-                </span>
-                {section.icon}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-[#fff8e6] p-4 text-sm leading-6 text-slate-700">
-          실제 주문 확정, 결제, 전표 등록처럼 외부 상태가 바뀌는 단계는 항상 승인 정책을 거쳐야 합니다.
-        </div>
-      </aside>
-    </section>
+      </section>
+      <section className="grid items-start gap-4 xl:grid-cols-3">
+        {columns.map((column) => {
+          const items = jobs.filter((job) => column.statuses.includes(job.status));
+          const tint = column.color === "amber" ? "bg-amber-50/60" : column.color === "indigo" ? "bg-indigo-50/60" : "bg-emerald-50/60";
+          return (
+            <div key={column.title} className={`min-h-[340px] rounded-2xl border border-slate-200/60 p-4 ${tint}`}>
+              <div className="mb-1 flex items-center justify-between"><h2 className="font-semibold">{column.title}</h2><span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">{items.length}</span></div>
+              <p className="mb-5 text-xs text-slate-500">{column.hint}</p>
+              <div className="space-y-3">
+                {items.slice(0, 8).map((job) => (
+                  <button key={job.id} onClick={() => onOpenJob(job.id)} className="group w-full rounded-xl border border-slate-200/80 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+                    <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-slate-500">{job.sourceSystem || "미지정"}</span><ArrowRight className="h-4 w-4 text-slate-300 group-hover:text-indigo-600" /></div>
+                    <p className="mt-3 line-clamp-2 text-sm font-semibold leading-6">{job.filename}</p>
+                    <div className="mt-4 flex items-center justify-between gap-2"><Badge className={statusClass(job.status)}>{statusLabel(job.status)}</Badge><span className="text-sm font-semibold">{job.totalRows}건</span></div>
+                    <p className="mt-3 text-[11px] text-slate-400">{formatDateTime(job.updatedAt)}</p>
+                  </button>
+                ))}
+                {!items.length ? <div className="flex min-h-40 flex-col items-center justify-center gap-2 text-sm text-slate-400"><CheckCircle2 className="h-6 w-6 opacity-50" />해당 작업이 없습니다</div> : null}
+                {items.length > 8 ? <p className="text-center text-xs text-slate-500">최근 8개 표시 · 전체 내역은 주문 관리에서 확인</p> : null}
+              </div>
+            </div>
+          );
+        })}
+      </section>
+      <section className="grid gap-3 rounded-2xl border border-slate-200/70 bg-white p-5 sm:grid-cols-2 xl:grid-cols-4">
+        {["이로움", "보필", "ERP 주문", "메일 주문"].map((channel) => <div key={channel} className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-600">{channel.slice(0, 1)}</span><div><p className="text-sm font-semibold">{channel}</p><p className="mt-1 text-xs text-slate-500">저장 작업 {jobs.filter((job) => job.sourceSystem === channel).length}개</p></div></div>)}
+      </section>
+    </div>
   );
 }
 
-function OrderChannelSidebar({ onSelect }: { onSelect: (channel: string) => void }) {
+function OrderChannelSidebar({ onSelect, selected }: { onSelect: (channel: string | null) => void; selected: string | null }) {
   return (
-    <aside className="h-fit rounded-lg border border-slate-200 bg-white p-3 lg:sticky lg:top-4">
+    <aside className="mt-5 border-t border-slate-200 px-2 pt-5">
       <div className="border-b border-slate-200 px-2 pb-3">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#0f766e]">주문 채널</p>
-        <p className="mt-1 text-xs leading-5 text-slate-500">거래처를 선택해 이 페이지에서 주문을 접수합니다.</p>
+        <button onClick={() => onSelect(null)} className={`mt-3 w-full rounded-lg px-2 py-2 text-left text-sm ${!selected ? "bg-emerald-50 font-semibold text-emerald-800" : "text-slate-500"}`}>전체 채널</button>
       </div>
       <div className="mt-3 space-y-4">
         {orderChannelGroups.map((group) => (
           <section key={group.title}>
             <div className="px-2">
               <h3 className="text-sm font-semibold text-slate-900">{group.title}</h3>
-              <p className="mt-0.5 text-[11px] text-slate-500">{group.description}</p>
             </div>
             <div className="mt-1.5 space-y-0.5">
               {group.items.map((item) => (
                 <button
                   key={item}
                   type="button"
-                  className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm text-slate-600 transition hover:bg-teal-50 hover:text-[#0f4f49]"
+                  className={`flex w-full items-center rounded-lg px-2 py-2 text-left text-sm transition hover:bg-emerald-50 ${selected === item ? "bg-emerald-50 font-semibold text-emerald-800" : "text-slate-500"}`}
                   onClick={() => onSelect(item)}
                 >
                   <span className="mr-2 h-1.5 w-1.5 rounded-full bg-slate-300" />
@@ -753,15 +742,6 @@ function OverviewCard({ label, value }: { label: string; value: number }) {
   );
 }
 
-function FlowCard({ title, text }: { title: string; text: string }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <h3 className="font-semibold">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-slate-600">{text}</p>
-    </div>
-  );
-}
-
 export default function OrderOpsApp() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -774,6 +754,14 @@ export default function OrderOpsApp() {
   const [selectedDateKey, setSelectedDateKey] = useState(() => toDateKey(new Date()));
   const [viewMode, setViewMode] = useState<PageMode>("overview");
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
+  const [jobSearch, setJobSearch] = useState("");
+  const [jobFilter, setJobFilter] = useState("all");
+  const visibleJobs = jobs.filter((job) => {
+    const matchesChannel = !selectedChannel || job.sourceSystem === selectedChannel;
+    const matchesSearch = `${job.filename} ${job.sourceSystem} ${(job.rows ?? []).map((row) => `${row.orderId} ${row.productName} ${row.recipientName}`).join(" ")}`.toLowerCase().includes(jobSearch.toLowerCase());
+    const matchesStatus = jobFilter === "all" || (jobFilter === "completed" ? job.status === "COMPLETED" : ["READY", "AWAITING_REVIEW", "REVIEWED", "QUEUED", "SUBMIT_QUEUED", "RUNNING"].includes(job.status));
+    return matchesChannel && matchesSearch && matchesStatus;
+  });
 
   const rows = activeJob?.rows ?? previewRows;
   const orderSummary = useMemo(
@@ -998,16 +986,22 @@ export default function OrderOpsApp() {
   const currentTitle = activeJob ? activeJob.filename : filename || "새 주문 파일";
 
   return (
-    <main className="min-h-screen bg-[#f6f7f4] text-slate-950">
-      <div className="mx-auto flex max-w-[1480px] flex-col gap-5 px-4 py-4 sm:px-6 lg:px-8">
-        <header className="flex flex-col gap-4 border-b border-slate-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
+    <main className="ops-shell min-h-screen bg-[#f8faf9] text-slate-900">
+      <aside className="ops-sidebar">
+        <div className="flex items-center gap-3 px-3 pb-7 pt-2"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-700 text-white"><ClipboardList className="h-5 w-5" /></span><span className="text-sm font-bold leading-5">Membership<span className="block text-xs font-medium text-slate-400">주문 운영</span></span></div>
+        <nav className="space-y-1">
+          {appSections.map((section) => <button key={section.id} onClick={() => setViewMode(section.id)} aria-current={viewMode === section.id ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition ${viewMode === section.id ? "bg-emerald-50 font-semibold text-emerald-800" : "text-slate-500 hover:bg-slate-100"}`}>{section.icon}{section.id === "orders" ? "주문 관리" : section.label}</button>)}
+        </nav>
+        <OrderChannelSidebar selected={selectedChannel} onSelect={(channel) => { setSelectedChannel(channel); setViewMode("orders"); }} />
+        <div className="mt-6 border-t border-slate-200 px-3 pt-4 text-xs leading-5 text-slate-400">아마란스 직접 연동<span className="block text-slate-500">연결 준비 중 · 현재 엑셀 접수 지원</span></div>
+      </aside>
+      <div className="ops-content flex min-w-0 flex-col gap-6 p-4 sm:p-7 xl:p-9">
+        <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-md bg-[#0f766e] text-white">
-              <ClipboardList className="h-6 w-6" />
-            </div>
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight">Membership 주문 운영</h1>
-              <p className="text-sm text-slate-600">B2B몰, ERP, 수기 주문을 한 곳에서 접수하고 검증합니다.</p>
+              <p className="mb-1.5 text-xs font-medium tracking-wide text-slate-400">MEMBERSHIP / OPERATIONS</p>
+              <h1 className="text-3xl font-bold tracking-tight">{viewMode === "orders" ? "주문 관리" : appSections.find((section) => section.id === viewMode)?.label}</h1>
+              <p className="mt-2 text-sm text-slate-500">{viewMode === "overview" ? "발주 접수부터 주문 완료까지, 진행 상황을 한눈에 확인하세요." : "채널별 주문을 확인하고 검증 결과에 따라 승인하세요."}</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1033,14 +1027,7 @@ export default function OrderOpsApp() {
           </div>
         </header>
 
-        <div className="grid items-start gap-5 lg:grid-cols-[270px_minmax(0,1fr)]">
-          <OrderChannelSidebar
-            onSelect={(channel) => {
-              setSelectedChannel(channel);
-              setViewMode("orders");
-              setMessage(`${channel}을 선택했습니다. 주문 준비 요청과 결과 확인은 이 페이지에서 진행합니다.`);
-            }}
-          />
+        <div>
           <div className="min-w-0 space-y-5">
             <section className="grid gap-3 md:grid-cols-4">
               <MetricCard icon={<FileSpreadsheet />} label="전체 주문" value={summary.total} />
@@ -1049,28 +1036,8 @@ export default function OrderOpsApp() {
               <MetricCard icon={<AlertCircle />} label="실패" value={summary.failed} tone="failed" />
             </section>
 
-        <nav className="grid gap-2 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-3 xl:grid-cols-5">
-          {appSections.map((section) => (
-            <button
-              key={section.id}
-              className={`rounded-md border px-3 py-3 text-left transition ${
-                viewMode === section.id
-                  ? "border-[#0f766e] bg-teal-50 text-[#0f4f49]"
-                  : "border-transparent hover:border-slate-200 hover:bg-slate-50"
-              }`}
-              onClick={() => setViewMode(section.id)}
-            >
-              <span className="flex items-center gap-2 text-sm font-semibold">
-                {section.icon}
-                {section.label}
-              </span>
-              <span className="mt-1 block text-xs text-slate-500">{section.description}</span>
-            </button>
-          ))}
-        </nav>
-
         {viewMode === "overview" ? (
-          <OverviewPage jobs={jobs} onGo={setViewMode} />
+          <OverviewPage jobs={jobs} onOpenJob={(id) => { setViewMode("orders"); void openJob(id); }} />
         ) : viewMode === "calendar" ? (
           <OperationsCalendar
             jobs={jobs}
@@ -1084,47 +1051,31 @@ export default function OrderOpsApp() {
             }}
           />
         ) : viewMode === "orders" ? (
-          <section className="grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
-            <aside className="rounded-lg border border-slate-200 bg-white">
+          <section className="grid items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(480px,0.9fr)]">
+            <aside className="min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white">
             <div className="border-b border-slate-200 p-4">
-              <h2 className="font-semibold">클라우드 작업</h2>
-              <p className="mt-1 text-sm text-slate-600">저장된 작업은 다른 PC에서도 이어서 볼 수 있습니다.</p>
+              <div className="flex gap-4 border-b border-slate-100 pb-3">{[{id:"all",label:"전체 주문"},{id:"pending",label:"승인·실행 대기"},{id:"completed",label:"주문 완료"}].map((filter) => <button key={filter.id} onClick={() => setJobFilter(filter.id)} className={`pb-2 text-sm ${jobFilter === filter.id ? "border-b-2 border-emerald-700 font-semibold text-emerald-800" : "text-slate-400"}`}>{filter.label}</button>)}</div>
+              <div className="relative mt-4"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><Input aria-label="주문 검색" className="pl-9" placeholder="파일명, 주문번호, 상품, 수취인 검색" value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} /></div>
+              <p className="mt-3 text-xs text-slate-400">{selectedChannel || "전체 채널"} · {visibleJobs.length}개 작업</p>
+              <select aria-label="주문 채널 필터" className="mt-3 w-full rounded-lg border border-slate-200 bg-white p-2 text-sm text-slate-600 lg:hidden" value={selectedChannel || ""} onChange={(event) => setSelectedChannel(event.target.value || null)}><option value="">전체 채널</option>{orderChannelGroups.map((group) => <optgroup key={group.title} label={group.title}>{group.items.map((channel) => <option key={channel} value={channel}>{channel}</option>)}</optgroup>)}</select>
             </div>
-            <div className="max-h-[640px] overflow-auto p-2">
-              {jobs.length === 0 ? (
+            <div className="max-h-[760px] overflow-auto">
+              {visibleJobs.length === 0 ? (
                 <div className="rounded-md border border-dashed border-slate-300 p-4 text-sm text-slate-600">
-                  아직 저장된 주문 작업이 없습니다.
+                  조건에 맞는 주문 작업이 없습니다.
                 </div>
               ) : (
-                jobs.map((job) => (
-                  <button
-                    key={job.id}
-                    className={`mb-2 w-full rounded-md border p-3 text-left transition ${
-                      activeJob?.id === job.id
-                        ? "border-[#0f766e] bg-teal-50"
-                        : "border-slate-200 bg-white hover:bg-slate-50"
-                    }`}
-                    onClick={() => void openJob(job.id)}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="line-clamp-2 text-sm font-medium">{job.filename}</span>
-                      <Badge className={statusClass(job.status)}>{statusLabel(job.status)}</Badge>
-                    </div>
-                    <div className="mt-2 text-xs text-slate-500">
-                      {job.sourceSystem || "미지정"} · {job.totalRows}건 · 완료 {job.readyRows} · 실패 {job.failedRows}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">최근 작업자: {workerLabel(job)}</div>
-                  </button>
-                ))
+                <Table><TableHeader><TableRow><TableHead>주문 작업</TableHead><TableHead>채널</TableHead><TableHead>건수</TableHead><TableHead>상태</TableHead></TableRow></TableHeader><TableBody>{visibleJobs.map((job) => <TableRow key={job.id} data-state={activeJob?.id === job.id ? "selected" : undefined} className={activeJob?.id === job.id ? "bg-emerald-50/80" : "hover:bg-slate-50"}><TableCell className="max-w-[280px] whitespace-normal"><button onClick={() => void openJob(job.id)} className="w-full text-left"><span className="line-clamp-2 text-sm font-medium leading-6">{job.filename}</span><span className="mt-1 block text-[11px] text-slate-400">{formatDateTime(job.updatedAt)}</span></button></TableCell><TableCell><span className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600">{job.sourceSystem || "미지정"}</span></TableCell><TableCell>{job.totalRows}</TableCell><TableCell><button aria-label={`${job.filename} 상세 열기`} onClick={() => void openJob(job.id)}><Badge className={statusClass(job.status)}>{statusLabel(job.status)}</Badge></button></TableCell></TableRow>)}</TableBody></Table>
               )}
             </div>
             </aside>
 
-            <section className="rounded-lg border border-slate-200 bg-white">
+            <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white">
             <div className="flex flex-col gap-3 border-b border-slate-200 p-4 xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-lg font-semibold">{selectedChannel ? `${selectedChannel} · ${currentTitle}` : currentTitle}</h2>
+                  <p className="w-full text-xs font-semibold tracking-wide text-slate-400">주문 상세</p>
+                  <h2 className="break-all text-base font-semibold leading-7">{currentTitle}</h2>
                   {activeJob ? (
                     <Badge className={statusClass(activeJob.status)}>{statusLabel(activeJob.status)}</Badge>
                   ) : previewRows.length ? (
@@ -1164,7 +1115,7 @@ export default function OrderOpsApp() {
                 <TabsTrigger value="audit">작업 로그</TabsTrigger>
               </TabsList>
               <TabsContent value="rows" className="mt-4">
-                {rows.length ? <OrderTable rows={rows} /> : <EmptyState />}
+                {rows.length ? <div className="space-y-4">{rows.map((row, index) => <article key={`${row.lineNo}-${index}`} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs text-slate-400">{row.sourceSystem} · 원본 {row.lineNo}행</p><h3 className="mt-2 font-semibold">{row.productName}</h3>{row.option ? <p className="mt-1 text-sm text-slate-500">{row.option}</p> : null}</div><Badge className={statusClass(row.status)}>{statusLabel(row.status)}</Badge></div><dl className="mt-4 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-3 border-t border-slate-100 pt-4 text-sm"><dt className="text-slate-400">원주문번호</dt><dd className="break-all">{row.orderId || "-"}</dd><dt className="text-slate-400">수량</dt><dd>{row.quantity}개</dd><dt className="text-slate-400">수취인</dt><dd>{row.recipientName || "-"}<span className="mt-1 block text-xs text-slate-500">{row.recipientPhone}</span></dd><dt className="text-slate-400">배송지</dt><dd className="break-words leading-6">{row.address} {row.addressDetail}</dd><dt className="text-slate-400">배송 메모</dt><dd className="break-words">{row.memo || "-"}</dd>{row.reason ? <><dt className="text-slate-400">검증 사유</dt><dd className="leading-6">{row.reason}</dd></> : null}</dl></article>)}</div> : <EmptyState />}
               </TabsContent>
               <TabsContent value="review" className="mt-4">
                 <WorkerReviewPanel
@@ -2236,10 +2187,10 @@ function MetricCard({
     failed: "bg-rose-50 text-rose-700",
   };
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
+    <div className="rounded-2xl border border-slate-200/70 bg-white p-5">
       <div className="flex items-center justify-between">
         <span className="text-sm text-slate-600">{label}</span>
-        <span className={`flex h-8 w-8 items-center justify-center rounded-md ${colors[tone]}`}>{icon}</span>
+        <span className={`flex h-10 w-10 items-center justify-center rounded-xl [&>svg]:h-5 [&>svg]:w-5 ${colors[tone]}`}>{icon}</span>
       </div>
       <div className="mt-3 text-3xl font-semibold tracking-tight">{value.toLocaleString()}</div>
     </div>

@@ -2,6 +2,22 @@
 @import "tw-animate-css";
 @import "../vendor/shadcn-tailwind-4.13.0.css";
 
+.ops-sidebar { width: 224px; position: fixed; inset: 0 auto 0 0; overflow-y: auto; padding: 24px 14px; background: #fff; border-right: 1px solid #e8edea; }
+.ops-content { margin-left: 224px; }
+.ops-shell { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+.ops-shell table tr { border-color: #e8edea; }
+.ops-shell table th { font-size: 11px; color: #64748b; background: #f8faf9; font-weight: 500; }
+.ops-shell table td { padding-top: 16px; padding-bottom: 16px; }
+.ops-shell button { cursor: pointer; }
+.ops-shell button:disabled { cursor: not-allowed; }
+@media (max-width: 1023px) {
+  .ops-sidebar { position: static; width: auto; max-height: none; padding: 16px; border-right: none; border-bottom: 1px solid #e8edea; }
+  .ops-sidebar nav { display: flex; overflow-x: auto; gap: 4px; }
+  .ops-sidebar nav button { width: auto; flex-shrink: 0; white-space: nowrap; }
+  .ops-sidebar > aside, .ops-sidebar > div:last-child { display: none; }
+  .ops-content { margin-left: 0; }
+}
+
 @utility scrollbar-thin {
   scrollbar-width: thin;
 }
