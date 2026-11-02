@@ -2,12 +2,12 @@ name: Membership order background worker
 
 on:
   workflow_dispatch:
+  # 평소 실행은 주문워커 즉시실행기(scripts/order_dispatcher.gs, Apps Script)가 대기 작업이 생기면 1분 안에 workflow_dispatch로 호출한다.
+  # GitHub cron은 10~40분씩 밀려서, 아래 예약은 즉시실행기가 멈췄을 때를 대비한 보조용(평일 업무시간 30분 간격)만 남김.
   schedule:
-    # 평일 발주 업무시간(KST 08:33~15:23)에만 10분 간격 실행. GitHub cron은 UTC 기준(KST = UTC+9).
-    # 정각(:00)은 GitHub 스케줄이 몰려 지연되기 쉬워 3분 단위로 비켜 둠.
-    - cron: "33,43,53 23 * * 0-4"           # KST 월~금 08:33, 08:43, 08:53
-    - cron: "3,13,23,33,43,53 0-5 * * 1-5"  # KST 월~금 09:03 ~ 14:53
-    - cron: "3,13,23 6 * * 1-5"             # KST 월~금 15:03, 15:13, 15:23
+    - cron: "38 23 * * 0-4"           # KST 월~금 08:38
+    - cron: "8,38 0-5 * * 1-5"        # KST 월~금 09:08 ~ 14:38, 30분 간격
+    - cron: "8 6 * * 1-5"             # KST 월~금 15:08
 
 permissions:
   contents: write
