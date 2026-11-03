@@ -46,3 +46,6 @@ next-env.d.ts
 /outputs/
 /work/
 /.local-analysis/
+
+# ai-collab local routing state
+.orca-routing/
