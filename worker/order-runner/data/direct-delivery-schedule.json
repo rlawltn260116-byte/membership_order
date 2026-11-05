@@ -20,7 +20,7 @@
     { "vendor": "코지디자인", "orderDeadline": "13:00", "receiptDeadline": "13:30", "method": "카톡", "note": "카톡 텍스트로" },
     { "vendor": "포웰", "orderDeadline": "13:00", "receiptDeadline": "13:30", "method": "카톡" },
     { "vendor": "안앤락", "round": "13:00", "orderDeadline": "13:00", "receiptDeadline": "13:30", "method": "이메일" },
-    { "vendor": "나눔에이치앤씨", "appChannel": "나눔에이치엔씨", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "B2B몰", "url": "https://www.nanumhnc.co.kr" },
+    { "vendor": "나눔에이치앤씨", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "B2B몰", "url": "https://www.nanumhnc.co.kr" },
     { "vendor": "삼주유니콘", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "이메일", "note": "발주 접수 시 외부메일로 보낼 것" },
     { "vendor": "안앤락", "round": "13:30", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "이메일" },
     { "vendor": "미키코리아", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "카톡" },
@@ -33,6 +33,7 @@
     { "vendor": "대성홈테크", "orderDeadline": "14:30", "receiptDeadline": "15:00", "method": "카톡" },
     { "vendor": "에이엠이", "orderDeadline": "14:30", "receiptDeadline": "15:00", "method": "ERP", "url": "https://c-portal.ecount.com/" },
     { "vendor": "삼원스카이", "orderDeadline": "15:00", "receiptDeadline": "15:30", "method": "이메일", "note": "발주 접수 시 외부메일로 보낼 것" },
-    { "vendor": "건강홈케어", "orderDeadline": "15:00", "receiptDeadline": "15:30", "method": "이메일", "note": "발주 접수 시 외부메일로 보낼 것" }
+    { "vendor": "건강홈케어", "orderDeadline": "15:00", "receiptDeadline": "15:30", "method": "이메일", "note": "발주 접수 시 외부메일로 보낼 것" },
+    { "vendor": "그레이스케일", "orderDeadline": null, "receiptDeadline": null, "method": "카톡", "note": "시간표에 마감 시각 없음" }
   ]
 }

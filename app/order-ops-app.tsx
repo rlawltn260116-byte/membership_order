@@ -220,7 +220,7 @@ const orderChannelGroups = [
   {
     title: "B2B몰 주문",
     description: "온라인몰 주문 접수",
-    items: ["이로움", "보필", "나눔에이치엔씨"],
+    items: ["이로움", "보필", "나눔에이치앤씨"],
   },
   {
     title: "ERP 주문",
@@ -230,14 +230,23 @@ const orderChannelGroups = [
   {
     title: "메일 주문",
     description: "메일 주문서 접수",
-    items: ["현대메딕스", "나이스텍", "엠씨텍", "안앤락", "삼주유니콘", "진산메디칼", "코리아케어서프라이", "그레이스케일", "삼원스카이, 건강홈케어"],
+    items: ["나이스텍", "엠씨텍", "안앤락", "삼주유니콘", "진산메디칼", "코리아케어서프라이", "삼원스카이", "건강홈케어"],
   },
   {
     title: "팩스 주문",
     description: "팩스 주문서 접수",
-    items: ["유광정밀", "미키코리아", "국제케어"],
+    items: ["유광정밀", "국제케어"],
+  },
+  {
+    title: "카톡 주문",
+    description: "카카오톡 주문 접수",
+    items: ["선인케어", "현대메딕스", "포에버헬스케어", "베스타", "아이비", "코지디자인", "포웰", "미키코리아", "미키코리아메디칼", "대성홈테크", "그레이스케일"],
   },
 ] as const;
+
+function normalizeChannelName(value: string) {
+  return value === "나눔에이치엔씨" ? "나눔에이치앤씨" : value;
+}
 
 function normalizeHeader(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, "_");
@@ -437,7 +446,7 @@ function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
 
   return {
     lineNo: Number(cell(raw, "__line_no")) || index + 2,
-    sourceSystem: cell(raw, "source_system") || cell(raw, "site") || cell(raw, "erp") || "미지정",
+    sourceSystem: normalizeChannelName(cell(raw, "source_system") || cell(raw, "site") || cell(raw, "erp") || "미지정"),
     orderId: cell(raw, "order_id"),
     category,
     productName: cell(raw, "product_name"),
@@ -757,7 +766,7 @@ export default function OrderOpsApp() {
   const [jobSearch, setJobSearch] = useState("");
   const [jobFilter, setJobFilter] = useState("all");
   const visibleJobs = jobs.filter((job) => {
-    const matchesChannel = !selectedChannel || job.sourceSystem === selectedChannel;
+    const matchesChannel = !selectedChannel || normalizeChannelName(job.sourceSystem) === selectedChannel;
     const matchesSearch = `${job.filename} ${job.sourceSystem} ${(job.rows ?? []).map((row) => `${row.orderId} ${row.productName} ${row.recipientName}`).join(" ")}`.toLowerCase().includes(jobSearch.toLowerCase());
     const matchesStatus = jobFilter === "all" || (jobFilter === "completed" ? job.status === "COMPLETED" : ["READY", "AWAITING_REVIEW", "REVIEWED", "QUEUED", "SUBMIT_QUEUED", "RUNNING"].includes(job.status));
     return matchesChannel && matchesSearch && matchesStatus;
