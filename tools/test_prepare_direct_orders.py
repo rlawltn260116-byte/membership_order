@@ -81,8 +81,12 @@ class PreparationTests(unittest.TestCase):
     def test_unmapped_form_unknown_vendor_special_form(self):
         self.assertTrue(self.run_rows([['특수양식'], ['내용']])['issues'])
         self.assertEqual(self.run_rows(vendor='현대메딕스')['groups'][0]['status'], 'HOLD')
-        self.assertEqual(self.run_rows(vendor='그레이스케일')['groups'][0]['status'], 'HOLD')
         self.assertTrue(self.run_rows(vendor='없는업체')['issues'])
+
+    def test_updated_chat_vendors_prepare_dry_run(self):
+        for vendor in ('그레이스케일', '엘에스케이화인텍스', '보림제작소'):
+            with self.subTest(vendor=vendor):
+                self.assertEqual(self.run_rows(vendor=vendor)['groups'][0]['status'], 'PREPARED_DRY_RUN')
 
     def test_mapping_and_missing_header(self):
         mapping = {f: f'열{i}' for i, f in enumerate(p.FIELDS)}

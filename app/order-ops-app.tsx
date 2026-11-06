@@ -1,5 +1,6 @@
 "use client";
 
+import { orderChannelGroups, normalizeChannelName, nextPreparation, scheduleLabel } from "../worker/order-runner/schedule.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -75,6 +76,7 @@ type OrderRow = {
 };
 
 type Job = {
+  scheduledPreparation?: { runAt: string; receiptDeadlineAt: string; method: string } | null;
   id: string;
   filename: string;
   sourceSystem: string;
@@ -215,38 +217,6 @@ const appSections: {
   { id: "membership", label: "회원/로그인", description: "가입과 권한", icon: <UserRound className="h-4 w-4" /> },
   { id: "settings", label: "관리자 설정", description: "승인과 기준값", icon: <Settings className="h-4 w-4" /> },
 ];
-
-const orderChannelGroups = [
-  {
-    title: "B2B몰 주문",
-    description: "온라인몰 주문 접수",
-    items: ["이로움", "보필", "나눔에이치앤씨"],
-  },
-  {
-    title: "ERP 주문",
-    description: "ERP 전표·주문 처리",
-    items: ["세비앙", "에이엠이", "명성실버케어"],
-  },
-  {
-    title: "메일 주문",
-    description: "메일 주문서 접수",
-    items: ["나이스텍", "엠씨텍", "안앤락", "삼주유니콘", "진산메디칼", "코리아케어서프라이", "삼원스카이", "건강홈케어"],
-  },
-  {
-    title: "팩스 주문",
-    description: "팩스 주문서 접수",
-    items: ["유광정밀", "국제케어"],
-  },
-  {
-    title: "카톡 주문",
-    description: "카카오톡 주문 접수",
-    items: ["선인케어", "현대메딕스", "포에버헬스케어", "베스타", "아이비", "코지디자인", "포웰", "미키코리아", "미키코리아메디칼", "대성홈테크", "그레이스케일"],
-  },
-] as const;
-
-function normalizeChannelName(value: string) {
-  return value === "나눔에이치엔씨" ? "나눔에이치앤씨" : value;
-}
 
 function normalizeHeader(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, "_");
@@ -731,7 +701,7 @@ function OrderChannelSidebar({ onSelect, selected }: { onSelect: (channel: strin
                   onClick={() => onSelect(item)}
                 >
                   <span className="mr-2 h-1.5 w-1.5 rounded-full bg-slate-300" />
-                  <span className="truncate">{item}</span>
+                  <span className="min-w-0"><span className="block truncate">{item}</span><span className="block text-[10px] leading-4 text-slate-400">{scheduleLabel(item)}</span></span>
                 </button>
               ))}
             </div>
@@ -882,13 +852,18 @@ export default function OrderOpsApp() {
     }
   }
 
-  async function queueExecution() {
+  async function queueExecution(reserve = false) {
     if (!activeJob) return;
     setLoading(true);
     try {
       const queuedAt = new Date().toISOString();
+      if (reserve && process.env.NEXT_PUBLIC_ENABLE_ORDER_PREPARATION_SCHEDULING !== "true") throw new Error("현재 학습·준비 모드입니다. 예약 실행은 꺼져 있습니다.");
+      const reservation = reserve ? nextPreparation(activeJob.sourceSystem) : null;
+      if (reserve && !reservation) throw new Error("마감 시각이 없어 예약할 수 없습니다.");
+      if (reserve && rows.some((row) => normalizeChannelName(row.sourceSystem) !== normalizeChannelName(activeJob.sourceSystem))) throw new Error("업체별로 주문을 나누어 예약해 주세요.");
       await updateOrderJob(activeJob.id, {
         status: "QUEUED",
+        scheduledPreparation: reservation,
         executionMode: "PREPARE",
         dashboardReview: {
           state: "QUEUED",
@@ -898,7 +873,7 @@ export default function OrderOpsApp() {
         },
         updatedAt: queuedAt,
       });
-      setMessage("서버 준비 요청을 등록했습니다. 준비 결과는 이 페이지의 검토 탭에서 확인합니다.");
+      setMessage(reservation ? `${formatDateTime(reservation.runAt)} 준비 예약을 등록했습니다. 실제 제출에는 검토와 최종 승인이 필요합니다.` : "서버 준비 요청을 등록했습니다. 준비 결과는 이 페이지의 검토 탭에서 확인합니다.");
       await loadJobs();
       await openJob(activeJob.id);
     } catch (error) {
@@ -1106,14 +1081,16 @@ export default function OrderOpsApp() {
                     클라우드 저장
                   </Button>
                 ) : (
-                  <Button onClick={() => void queueExecution()} disabled={!activeJob || activeJob.status === "QUEUED" || loading}>
+                  <><Button variant="outline" onClick={() => void queueExecution(true)} disabled={process.env.NEXT_PUBLIC_ENABLE_ORDER_PREPARATION_SCHEDULING !== "true" || !activeJob || !nextPreparation(activeJob.sourceSystem) || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>시간표로 준비 예약 (기본 꺼짐)</Button>
+                  <Button onClick={() => void queueExecution()} disabled={!activeJob || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>
                     <PlayCircle className="h-4 w-4" />
                     서버 준비 요청
-                  </Button>
+                  </Button></>
                 )}
               </div>
             </div>
 
+            {activeJob?.scheduledPreparation ? <p className="border-b border-slate-200 px-4 py-3 text-sm text-slate-600">준비 예약: {formatDateTime(activeJob.scheduledPreparation.runAt)} · 접수마감: {formatDateTime(activeJob.scheduledPreparation.receiptDeadlineAt)} · 실제 제출은 검토·최종 승인 후 실행</p> : null}
             {message ? <div className="border-b border-slate-200 bg-[#fff8e6] px-4 py-3 text-sm text-slate-800">{message}</div> : null}
 
             <Tabs defaultValue="rows" className="p-4">

@@ -1,3 +1,4 @@
+import { preparationDue, reservationProblem, type PreparationReservation } from "../schedule.mjs";
 import { cert, initializeApp } from "firebase-admin/app";
 import { getDatabase } from "firebase-admin/database";
 import { chromium, type Browser, type Page } from "playwright";
@@ -26,6 +27,7 @@ type OrderRow = {
 type ExecutionMode = "PREPARE" | "SUBMIT";
 
 type OrderJob = {
+  scheduledPreparation?: PreparationReservation | null;
   id: string;
   sourceSystem?: string;
   status?: string;
@@ -120,6 +122,8 @@ async function claimJob(jobId: string): Promise<OrderJob | null> {
     if (value === null) return value;
     const current = value as OrderJob | null;
     if (!current || !["QUEUED", "SUBMIT_QUEUED"].includes(current.status ?? "")) return;
+    if (current.scheduledPreparation && process.env.ENABLE_ORDER_PREPARATION_SCHEDULING !== "true") return;
+    if (current.status === "QUEUED" && !preparationDue(current, new Date(), process.env.ENABLE_ORDER_PREPARATION_SCHEDULING === "true")) return;
     const executionMode: ExecutionMode = current.status === "SUBMIT_QUEUED" ? "SUBMIT" : "PREPARE";
     claimed = { ...current, id: jobId, status: "RUNNING", executionMode };
     return claimed;
@@ -569,7 +573,10 @@ async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerRep
   const serialized = process.env.EROUM_STORAGE_STATE_JSON;
   const details: WorkerDetail[] = [];
 
-  if (submitMode && !submitApproved) {
+  const scheduleProblem = !submitMode ? reservationProblem(job) : null;
+  if (scheduleProblem) {
+    for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason: scheduleProblem });
+  } else if (submitMode && !submitApproved) {
     const reason = rows.length !== 1
       ? "현재 실제 주문 확정은 안전 검증을 위해 한 번에 1행만 지원합니다. 주문을 나눠서 처리해 주세요."
       : approvalKey.length < 12
@@ -639,7 +646,8 @@ async function runOnce() {
   const recent = await database.ref(queuePath).orderByKey().limitToLast(100).get();
   const queuedIds: string[] = [];
   recent.forEach((child) => {
-    if (["QUEUED", "SUBMIT_QUEUED"].includes((child.val() as { status?: string } | null)?.status ?? "")) queuedIds.push(child.key as string);
+    const candidate = child.val() as OrderJob | null;
+    if (candidate && (!candidate.scheduledPreparation || process.env.ENABLE_ORDER_PREPARATION_SCHEDULING === "true") && (candidate.status === "SUBMIT_QUEUED" || (candidate.status === "QUEUED" && preparationDue(candidate, new Date(), process.env.ENABLE_ORDER_PREPARATION_SCHEDULING === "true")))) queuedIds.push(child.key as string);
     return false;
   });
   console.log(`::notice title=주문 워커::큐 조회 ${recent.numChildren()}건 중 실행 대기 ${queuedIds.length}건`);

@@ -107,7 +107,10 @@ function pendingJobs_() {
   const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) throw new Error('HTTP ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
   const jobs = JSON.parse(res.getContentText()) || {};
-  return Object.keys(jobs).filter((id) => jobs[id] && PENDING_STATUSES.indexOf(jobs[id].status) >= 0);
+  const schedulingEnabled = PropertiesService.getScriptProperties().getProperty('ENABLE_ORDER_PREPARATION_SCHEDULING') === 'true';
+  return Object.keys(jobs).filter((id) => jobs[id] && PENDING_STATUSES.indexOf(jobs[id].status) >= 0 &&
+    (!jobs[id].scheduledPreparation || (schedulingEnabled && (
+      jobs[id].status === 'SUBMIT_QUEUED' || !Number.isFinite(Date.parse(jobs[id].scheduledPreparation.runAt)) || Date.parse(jobs[id].scheduledPreparation.runAt) <= Date.now()))));
 }
 
 // 이미 실행 중이거나 시작 대기 중인 워커가 있으면 true (있으면 그 실행이 대기 작업을 처리한다)
