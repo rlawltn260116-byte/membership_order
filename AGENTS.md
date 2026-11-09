@@ -15,8 +15,8 @@ Project rules elsewhere in this file still apply to the executing agent.
 
 # Shared workflow (all Orca workspaces)
 
-This project runs in several Orca workspaces (git worktrees on separate branches) with both Claude
-and Codex. Chats cannot see each other, and worktrees do not share uncommitted files. Keep them
+The project has one goal: automating membership direct-delivery orders. Each Orca workspace (a git
+worktree on its own branch) is one sub-task of that goal, worked on by both Claude and Codex. Chats cannot see each other, and worktrees do not share uncommitted files. Keep them
 connected through `main` and `docs/WORKLOG.md`:
 
 1. Start: `git fetch origin` and bring your branch up to date with `origin/main`
