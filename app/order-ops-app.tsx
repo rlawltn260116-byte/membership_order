@@ -54,6 +54,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { createOrderJob, getOrderJob, listOrderJobs, updateOrderJob } from "@/lib/firebase-order-ops";
+import InventoryRegistrationPage from "./inventory-registration-page";
 
 type OrderRow = {
   lineNo: number;
@@ -161,6 +162,7 @@ type CalendarDay = {
 type PageMode =
   | "overview"
   | "orders"
+  | "inventory"
   | "calendar"
   | "channels"
   | "mapping"
@@ -208,6 +210,7 @@ const appSections: {
 }[] = [
   { id: "overview", label: "통합 현황", description: "전체 주문 흐름", icon: <BarChart3 className="h-4 w-4" /> },
   { id: "orders", label: "주문 접수", description: "파일 업로드와 검증", icon: <ListChecks className="h-4 w-4" /> },
+  { id: "inventory", label: "입출고 등록", description: "명세서 검수 후 마지막 단계", icon: <ClipboardList className="h-4 w-4" /> },
   { id: "calendar", label: "전체 일정", description: "일정과 기록", icon: <CalendarDays className="h-4 w-4" /> },
   { id: "channels", label: "채널/ERP", description: "사이트와 ERP 연결", icon: <Building2 className="h-4 w-4" /> },
   { id: "mapping", label: "상품 매핑", description: "상품명과 코드 정리", icon: <MapIcon className="h-4 w-4" /> },
@@ -346,8 +349,8 @@ function parseThkcWorkbookRows(matrix: unknown[][]) {
 async function parseXlsx(file: File) {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  await workbook.xlsx.load(bytes as unknown as Buffer);
+  const bytes = await file.arrayBuffer();
+  await workbook.xlsx.load(bytes);
   const firstSheet = workbook.worksheets[0];
   if (!firstSheet) throw new Error("엑셀 파일에 시트가 없습니다.");
   const matrix: unknown[][] = [];
@@ -629,7 +632,8 @@ function buildCalendarDays(monthDate: Date, jobs: Job[]) {
   });
 }
 
-function OverviewPage({ jobs, onOpenJob }: { jobs: Job[]; onOpenJob: (id: string) => void }) {
+function OverviewPage({ jobs, onOpenJob, onOpenInventory }: { jobs: Job[]; onOpenJob: (id: string) => void; onOpenInventory: () => void }) {
+  const steps = ["발주 접수", "데이터 검증", "운영자 승인", "주문 실행", "결과 확인", "명세서 검수", "입출고 등록"];
   const columns = [
     { title: "검토 필요", hint: "입력값과 예외를 확인하세요", color: "amber", statuses: ["HOLD", "FAILED"] },
     { title: "승인·실행 대기", hint: "검증 결과를 확인하고 진행하세요", color: "indigo", statuses: ["READY", "QUEUED", "RUNNING", "AWAITING_REVIEW", "REVIEWED", "SUBMIT_QUEUED"] },
@@ -638,14 +642,17 @@ function OverviewPage({ jobs, onOpenJob }: { jobs: Job[]; onOpenJob: (id: string
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-slate-200/70 bg-white px-5 py-6">
-        <div className="grid grid-cols-5 gap-2">
-          {["발주 접수", "데이터 검증", "운영자 승인", "주문 실행", "결과 확인"].map((step, index) => (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 xl:grid-cols-7">
+          {steps.map((step, index) => (
             <div key={step} className="relative text-center">
-              {index < 4 ? <div className="absolute left-[60%] right-[-40%] top-4 h-px bg-slate-200" /> : null}
               <span className="relative mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-indigo-50 text-sm font-semibold text-indigo-600">{index + 1}</span>
               <p className="mt-3 text-xs font-medium text-slate-700 sm:text-sm">{step}</p>
             </div>
           ))}
+        </div>
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+          <p className="text-sm text-slate-600">주문 완료 후, 검수한 명세서를 근거로 가상 입고와 출고를 한 쌍으로 등록합니다.</p>
+          <Button variant="outline" onClick={onOpenInventory}>입출고 절차 보기<ArrowRight className="h-4 w-4" /></Button>
         </div>
       </section>
       <section className="grid items-start gap-4 xl:grid-cols-3">
@@ -764,12 +771,12 @@ export default function OrderOpsApp() {
   const summary = viewMode === "orders" ? orderSummary : globalSummary;
 
   async function openJob(id: string) {
-    const data = await getOrderJob(id);
+    const data = await getOrderJob(id) as Job | null;
     if (!data) {
       setMessage("작업을 불러오지 못했습니다.");
       return;
     }
-    setActiveJob(data as Job);
+    setActiveJob(data);
     setPreviewRows([]);
     setFilename(data.filename);
   }
@@ -957,7 +964,8 @@ export default function OrderOpsApp() {
   }
 
   useEffect(() => {
-    void loadJobs();
+    const timeout = window.setTimeout(() => void loadJobs(), 0);
+    return () => window.clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -985,7 +993,7 @@ export default function OrderOpsApp() {
             <div>
               <p className="mb-1.5 text-xs font-medium tracking-wide text-slate-400">MEMBERSHIP / OPERATIONS</p>
               <h1 className="text-3xl font-bold tracking-tight">{viewMode === "orders" ? "주문 관리" : appSections.find((section) => section.id === viewMode)?.label}</h1>
-              <p className="mt-2 text-sm text-slate-500">{viewMode === "overview" ? "발주 접수부터 주문 완료까지, 진행 상황을 한눈에 확인하세요." : "채널별 주문을 확인하고 검증 결과에 따라 승인하세요."}</p>
+              <p className="mt-2 text-sm text-slate-500">{viewMode === "overview" ? "발주 접수부터 명세서 검수·입출고 등록까지, 전체 업무 흐름을 확인하세요." : viewMode === "inventory" ? "검수한 명세서를 근거로 아마란스에 입고·출고를 등록하는 마지막 단계입니다." : "채널별 주문을 확인하고 검증 결과에 따라 승인하세요."}</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1013,15 +1021,17 @@ export default function OrderOpsApp() {
 
         <div>
           <div className="min-w-0 space-y-5">
-            <section className="grid gap-3 md:grid-cols-4">
+            {viewMode !== "inventory" ? <section className="grid gap-3 md:grid-cols-4">
               <MetricCard icon={<FileSpreadsheet />} label="전체 주문" value={summary.total} />
               <MetricCard icon={<CheckCircle2 />} label="검증 완료" value={summary.ready} tone="ready" />
               <MetricCard icon={<PauseCircle />} label="확인 필요" value={summary.hold} tone="hold" />
               <MetricCard icon={<AlertCircle />} label="실패" value={summary.failed} tone="failed" />
-            </section>
+            </section> : null}
 
         {viewMode === "overview" ? (
-          <OverviewPage jobs={jobs} onOpenJob={(id) => { setViewMode("orders"); void openJob(id); }} />
+          <OverviewPage jobs={jobs} onOpenJob={(id) => { setViewMode("orders"); void openJob(id); }} onOpenInventory={() => setViewMode("inventory")} />
+        ) : viewMode === "inventory" ? (
+          <InventoryRegistrationPage />
         ) : viewMode === "calendar" ? (
           <OperationsCalendar
             jobs={jobs}
