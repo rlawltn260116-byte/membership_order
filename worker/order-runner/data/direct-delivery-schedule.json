@@ -25,7 +25,7 @@
     { "vendor": "삼주유니콘", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "이메일", "note": "발주 접수 시 외부메일로 보낼 것", "statementChannel": "이메일" },
     { "vendor": "안앤락", "round": "13:30", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "이메일", "statementChannel": "이메일" },
     { "vendor": "미키코리아", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "카톡", "statementChannel": "이메일" },
-    { "vendor": "THK", "round": "오후", "appChannel": "이로움", "orderDeadline": "14:00", "receiptDeadline": "14:30", "method": "B2B몰", "url": "https://eroumcare.com/", "statementChannel": "B2B몰" },
+    { "vendor": "THK", "round": "오후", "appChannel": "이로움", "orderDeadline": "14:00", "receiptDeadline": "14:30", "method": "B2B몰", "url": "https://eroumcare.com/", "statementChannel": "이메일" },
     { "vendor": "미키코리아메디칼", "orderDeadline": "14:00", "receiptDeadline": "14:30", "method": "카톡친구", "statementChannel": "이메일" },
     { "vendor": "명성실버케어", "orderDeadline": "14:00", "receiptDeadline": "14:30", "method": "ERP", "url": "https://c-portal.ecount.com", "statementChannel": "이메일" },
     { "vendor": "국제케어", "orderDeadline": "14:30", "receiptDeadline": "15:00", "method": "팩스", "statementChannel": "팩스" },
