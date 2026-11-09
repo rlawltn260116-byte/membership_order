@@ -22,7 +22,7 @@
     { "vendor": "안앤락", "round": "13:00", "orderDeadline": "13:00", "receiptDeadline": "13:30", "method": "이메일", "statementChannel": "이메일" },
     { "vendor": "나눔에이치앤씨", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "B2B몰", "url": "https://www.nanumhnc.co.kr", "statementChannel": "B2B몰" },
     { "vendor": "엘에스케이화인텍스", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "카톡", "statementChannel": "카톡" },
-    { "vendor": "삼주유니콘", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "이메일", "note": "발주 접수 시 외부메일로 보낼 것", "statementChannel": "이메일" },
+    { "vendor": "삼주유니콘", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "이메일", "note": "발주 접수 시 외부메일로 보낼 것", "statementChannel": "팩스" },
     { "vendor": "안앤락", "round": "13:30", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "이메일", "statementChannel": "이메일" },
     { "vendor": "미키코리아", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "카톡", "statementChannel": "이메일" },
     { "vendor": "THK", "round": "오후", "appChannel": "이로움", "orderDeadline": "14:00", "receiptDeadline": "14:30", "method": "B2B몰", "url": "https://eroumcare.com/", "statementChannel": "이메일" },
