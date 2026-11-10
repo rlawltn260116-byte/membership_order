@@ -68,3 +68,14 @@ npm run build
 검증: `node --test worker/order-runner/schedule.test.mjs` (실제 주문·발송 없이 실행).
 
 새 예약 기능은 기본 꺼짐입니다. 학습·준비 단계에서는 켜지 않습니다. 추후 별도 운영 승인을 받은 뒤에만 화면 빌드 환경의 `NEXT_PUBLIC_ENABLE_ORDER_PREPARATION_SCHEDULING`, 워커 환경의 `ENABLE_ORDER_PREPARATION_SCHEDULING`, 즉시실행기 스크립트 속성의 `ENABLE_ORDER_PREPARATION_SCHEDULING`을 모두 `true`로 설정해야 예약 준비가 실행됩니다. 현재 워크플로에는 활성화 변수를 주입하지 않습니다.
+
+## 이로움·보필 HTTP 장바구니 준비 (기본 꺼짐)
+
+브라우저 없이 로그인하고 고정 시험 상품으로 장바구니·주문서 초안을 확인하는 준비 경로다. **주문 제출 함수는 없다.** 이로움은 상품 검사·검색 조회 후 저장된 `select_item`과 같은 상품 필드로 메모리 초안을 만들고, 보필은 시험 상품 1개 담기 → 전체 상품 주문 GET → `직접 입력` 초안 → 시험 행 삭제 → 빈 장바구니 확인을 한다. 위 Playwright 주문 흐름, 승인 절차, `SUBMITTING` 잠금, 제출 원장, 1행 제한, `FINAL_SUBMISSION_APPROVAL_KEY` 검증과는 코드를 공유하지 않는다.
+
+- 켜는 조건: 환경변수 `ENABLE_B2B_HTTP_CART`가 정확히 `true`. 그 밖의 값이거나 없으면 Python을 실행하지 않아 사이트 요청이 0건이다.
+- GitHub Actions secret 이름: `EROUM_LOGIN_ID`, `EROUM_LOGIN_PASSWORD`, `BOFEEL_LOGIN_ID`, `BOFEEL_LOGIN_PASSWORD`. 값은 저장소에 두지 않는다. 연결부는 해당 업체의 두 값만 자식 프로세스에 넘기고 Firebase·승인 키·GitHub 토큰은 넘기지 않는다.
+- 의존성: Python 3.12와 `pip install -r requirements-http.txt`(`cryptography`).
+- 실행: `node b2b-http-cart.mjs eroum` 또는 `bofeel`. 업체당 로그인 1회, 실패·시간 초과 시 재시도하지 않고 `cartCheckRequired`로 보고한다.
+- workflow: `order-worker.yml`의 `b2b-http-cart` job은 수동 실행(`workflow_dispatch`)이면서 저장소 변수 `ENABLE_B2B_HTTP_CART`가 `true`일 때만 돈다. 예약 실행에서는 돌지 않는다. 변수와 secret은 아직 만들지 않았고 job도 실행하지 않았다.
+- 시험: `node --test b2b-http-cart.test.mjs`, `python -m unittest discover -p "test_http*.py"`(`cryptography` 필요).

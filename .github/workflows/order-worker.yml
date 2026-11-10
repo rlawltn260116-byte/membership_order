@@ -2,6 +2,11 @@ name: Membership order background worker
 
 on:
   workflow_dispatch:
+    inputs:
+      b2b_http_cart:
+        description: '이로움·보필 HTTP 장바구니 준비 시험을 실행한다(주문 제출 없음). 즉시실행기 호출에서는 꺼져 있다.'
+        type: boolean
+        default: false
   # 평소 실행은 주문워커 즉시실행기(scripts/order_dispatcher.gs, Apps Script)가 대기 작업이 생기면 1분 안에 workflow_dispatch로 호출한다.
   # GitHub cron은 10~40분씩 밀려서, 아래 예약은 즉시실행기가 멈췄을 때를 대비한 보조용(평일 업무시간 30분 간격)만 남김.
   schedule:
@@ -63,3 +68,41 @@ jobs:
           WORKER_ID: github-actions-order-worker
           GITHUB_TOKEN: ${{ github.token }}
         run: npm start
+
+  # 브라우저 없는 이로움·보필 HTTP 장바구니 준비. 주문을 제출하지 않는다(시험 상품 담기→주문서 초안→삭제).
+  # 수동 실행에서 b2b_http_cart 입력을 직접 켜고 저장소 변수 ENABLE_B2B_HTTP_CART가 'true'일 때만 돈다.
+  # 즉시실행기(Apps Script) 호출과 예약 실행에서는 돌지 않는다.
+  # 위 주문 처리 job과 승인·잠금·원장·Playwright 흐름은 이 job과 공유하지 않는다.
+  b2b-http-cart:
+    if: github.event_name == 'workflow_dispatch' && inputs.b2b_http_cart == true && vars.ENABLE_B2B_HTTP_CART == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install HTTP cart dependencies
+        working-directory: worker/order-runner
+        run: python -m pip install --disable-pip-version-check -r requirements-http.txt
+      - name: Prepare carts without submitting
+        working-directory: worker/order-runner
+        env:
+          ENABLE_B2B_HTTP_CART: ${{ vars.ENABLE_B2B_HTTP_CART }}
+          EROUM_LOGIN_ID: ${{ secrets.EROUM_LOGIN_ID }}
+          EROUM_LOGIN_PASSWORD: ${{ secrets.EROUM_LOGIN_PASSWORD }}
+          BOFEEL_LOGIN_ID: ${{ secrets.BOFEEL_LOGIN_ID }}
+          BOFEEL_LOGIN_PASSWORD: ${{ secrets.BOFEEL_LOGIN_PASSWORD }}
+        shell: bash
+        # 업체마다 1회만 실행한다. 실패하면 다음 업체로 넘어가지 않고 재시도하지 않는다.
+        run: |
+          node b2b-http-cart.mjs eroum
+          node b2b-http-cart.mjs bofeel

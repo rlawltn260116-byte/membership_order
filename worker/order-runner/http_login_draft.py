@@ -22,6 +22,10 @@ class LoginError(Exception):
     pass
 
 
+class StopSignalError(LoginError):
+    """추가 요청 없이 즉시 멈춰야 하는 사이트 신호."""
+
+
 class LoginForm(HTMLParser):
     def __init__(self, target):
         super().__init__()
@@ -82,7 +86,7 @@ def check_stop_signal(text):
                '계정 잠금', '잠긴 계정', '캡차', '자동입력 방지문자')
     if any(marker in text.lower() for marker in markers) or re.search(
             r'(?:로그인|비밀번호|인증)[^<>\n]{0,30}(?:실패|오류)[^<>\n]{0,20}(?:횟수|\d+\s*회)', text):
-        raise LoginError('실패 횟수·잠금·캡차·추가 인증 또는 차단 신호로 중단')
+        raise StopSignalError('실패 횟수·잠금·캡차·추가 인증 또는 차단 신호로 중단')
 
 
 class VendorHttpSession:
