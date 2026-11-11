@@ -21,7 +21,10 @@ function approved() {
 test("확인된 기본 상품만 정확히 연결한다", () => {
   assert.equal(mapProduct("eroum", row()).productId, "PRO2022102700012");
   assert.equal(mapProduct("bofeel", row({ productName: "안전손잡이 BFSH10" })).optionId, "31");
-  for (const name of ["DYJ-03 부품", "DYJ-030", "미확인 모델", "DA-006(초록)", "미끄럼방지매트리스 DA-006 / 회색"]) assert.equal(mapProduct("eroum", row({ productName: name })).status, "HOLD");
+  for (const name of ["DYJ-03 부품", "DYJ-030", "미확인 모델", "DA-006(초록)"]) assert.equal(mapProduct("eroum", row({ productName: name })).status, "HOLD");
+  assert.equal(mapProduct("eroum", row({ productName: "미끄럼방지매트리스 DA-006 / 회색" })).optionId, "회색");
+  assert.equal(mapProduct("bofeel", row({ productName: "BFMB20 / 파스텔블루" })).optionId, "6348");
+  assert.equal(planOrders(job([row({ expectedPrice: "10" })])).rows[0].expectedPrice, "10");
   assert.equal(mapProduct("bofeel", row({ productName: "이동변기 BFMB20 / 블루" })).status, "HOLD");
   assert.equal(mapProduct("eroum", row({ option: "회색" })).status, "HOLD");
 });
@@ -147,4 +150,22 @@ test("양 업체는 같은 큐에서 준비하며 제출 꺼짐은 전송하지 
   assert.deepEqual(vendors, ["eroum", "bofeel"]); assert.equal(result.details.length, 2); assert.equal(result.canSubmit, false);
   const disabled = await runQueueVendor("bofeel", [], { env: {}, spawn: () => assert.fail("프로세스 실행 금지") });
   assert.equal(disabled.details.length, 0);
+});
+
+test("스위치·승인·원장 중복·행 잠금·복수 주문은 각각 전송 전에 멈춘다", async () => {
+  for (const mode of ["스위치", "승인", "원장", "행잠금", "복수주문"]) {
+    const { value, env } = approved();
+    const events = [];
+    if (mode === "스위치") delete env.ENABLE_B2B_HTTP_SUBMIT;
+    if (mode === "승인") value.dashboardReview.finalSubmissionApproved = false;
+    if (mode === "복수주문") value.rows.push(row({ lineNo: 2, orderId: "SO1234567891" }));
+    const result = await submitOnePrepared({ job: value, env,
+      prepared: { submissionReady: true, sourceKey: planOrders(value).rows[0].sourceKey },
+      reserveLedger: async () => { events.push("원장"); return mode !== "원장"; },
+      lockRow: async () => { events.push("행잠금"); return mode !== "행잠금"; },
+      transport: async () => { events.push("전송"); throw Error("전송 금지"); },
+      record: async () => { events.push("기록"); } });
+    assert.equal(result.state, "HOLD", mode);
+    assert.deepEqual(events, mode === "원장" ? ["원장"] : mode === "행잠금" ? ["원장", "행잠금"] : [], mode);
+  }
 });

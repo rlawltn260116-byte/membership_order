@@ -127,7 +127,9 @@ class QueueTests(unittest.TestCase):
         session.catalog_object.return_value = product()
         session.get_cart.return_value = CartSnapshot('eroum', [], [], True)
         out = io.StringIO()
-        with patch('sys.stdout', new=out):
+        def verified(session, draft, *args):
+            draft.report['submission_ready'] = True
+        with patch('sys.stdout', new=out), patch('http_queue.verify_eroum', side_effect=verified):
             run('eroum', [group(), group(rows=[row(line=2)])], {'ENABLE_B2B_HTTP_CART': 'true', 'EROUM_LOGIN_ID': 'mock-user', 'EROUM_LOGIN_PASSWORD': 'mock-password'}, session_factory=lambda vendor: session)
         session.login.assert_called_once()
         session.catalog_object.assert_called_once()
@@ -153,10 +155,13 @@ class QueueTests(unittest.TestCase):
 
     def test_submit_intent_keeps_cart_until_parent_decision_then_cleans_if_not_sent(self):
         session = FakeBofeel()
-        value = prepare_bofeel_group(session, group('bofeel'), retain_for_submit=True)
+        def verified(session, draft, *args):
+            draft.report['submission_ready'] = True
+        with patch('http_queue.verify_bofeel', side_effect=verified):
+            value = prepare_bofeel_group(session, group('bofeel'), retain_for_submit=True)
         self.assertEqual(session.deleted, 0)
         self.assertEqual(session.quantity, 1)
-        self.assertFalse(value.report['submission_ready'])
+        self.assertTrue(value.report['submission_ready'])
         cleanup_bofeel(session, row('bofeel')['mapping'], 1)
         self.assertEqual(session.deleted, 1)
         self.assertEqual(session.quantity, 0)
@@ -190,6 +195,37 @@ class QueueTests(unittest.TestCase):
         with patch('sys.stdout', new=io.StringIO()):
             run('eroum', [group()], {}, session_factory=factory)
         factory.assert_not_called()
+
+    def test_submit_protocol_refuses_disabled_wrong_source_nonboolean_and_multiple_orders_then_cleans(self):
+        for mode in ('disabled','wrong-source','nonboolean','multiple-orders'):
+            session=FakeBofeel()
+            def ready(session, group, **kwargs):
+                session.quantity=1;session.created_row=session.get_cart().rows[0];session.retained_for_submit=True
+                value=OrderDraft([],{'submission_ready':True});value.expected_fields=[]
+                return value
+            env={'ENABLE_B2B_HTTP_CART':'true','BOFEEL_LOGIN_ID':'mock','BOFEEL_LOGIN_PASSWORD':'mock'}
+            if mode!='disabled':env['ENABLE_B2B_HTTP_SUBMIT']='true'
+            command={'submit':True,'sourceKey':'mock-source-1'}
+            if mode=='wrong-source':command['sourceKey']='other'
+            if mode=='nonboolean':command['submit']='true'
+            groups=[group('bofeel')]
+            if mode=='multiple-orders':groups.append(group('bofeel',[row('bofeel',line=2)]))
+            with self.subTest(mode=mode),patch('http_queue.prepare_bofeel_group',side_effect=ready), \
+                    patch('http_queue.submit_prepared') as send,patch('sys.stdout',new=io.StringIO()) as out, \
+                    patch('sys.stdin',new=io.StringIO(json.dumps(command)+'\n')):
+                run('bofeel',groups,env,session_factory=lambda vendor:session,execution_mode='SUBMIT')
+            send.assert_not_called()
+            self.assertEqual(session.deleted,1)
+            self.assertEqual(session.quantity,0)
+            self.assertEqual(len(out.getvalue().splitlines()),1)
+
+    def test_bofeel_amount_validation_failure_cleans_only_created_row(self):
+        session=FakeBofeel()
+        with patch('http_queue.verify_bofeel',side_effect=LoginError('모의 검증 실패')):
+            draft=prepare_bofeel_group(session,group('bofeel'),retain_for_submit=True)
+        self.assertFalse(draft.report['submission_ready'])
+        self.assertEqual(session.deleted,1)
+        session.get_cart().require_empty()
 
     def test_catalog_queries_are_once_bounded_and_one_second_apart(self):
         session = QueueSession('eroum')

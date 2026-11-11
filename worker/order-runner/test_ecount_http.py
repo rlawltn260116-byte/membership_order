@@ -196,7 +196,7 @@ class EcountReadAndDraftTest(unittest.TestCase):
         self.assertEqual(len(s.sent), 5)
 
     def test_compression_and_bad_response_do_not_disclose_body(self):
-        for text, compression in [('비공개본문', ''), ('e30=', 'ecbzip'), ('[]', '')]:
+        for text, compression in [('비공개본문', ''), ('e30=', 'unknown'), ('[]', '')]:
             with self.subTest(compression=compression), self.assertRaises(E.EcountError) as err:
                 E.decode_api_response(text, compression=compression)
             self.assertNotIn('비공개본문', str(err.exception))
@@ -266,6 +266,135 @@ class EcountReadAndDraftTest(unittest.TestCase):
             with self.assertRaises(E.EcountError):
                 s.login('모의회사', '모의사용자', '모의비밀번호')
         self.assertEqual(len(s.sent), 2)
+
+    def test_ecbzip_header_with_observed_base64_json(self):
+        value = {'Status': '200', 'Data': {'Data': [], 'TotalCount': 0}}
+        encoded = base64.b64encode(json.dumps(value).encode()).decode()
+        self.assertEqual(E.decode_api_response(encoded, compression='ecbzip'), value)
+        with self.assertRaises(E.EcountError):
+            E.decode_api_response('알수없는압축본문', compression='ecbzip')
+
+    def test_param_is_actual_search_text_and_context_is_unchanged(self):
+        original = copy.deepcopy(SEARCH_CONTEXT)
+        body = E.build_product_search_body(SEARCH_CONTEXT, '모의품목')
+        self.assertEqual(body['PARAM'], '모의품목')
+        self.assertEqual(body['Request']['Data']['PARAM'], '모의품목')
+        self.assertEqual(SEARCH_CONTEXT, original)
+
+    def test_standalone_screen_id_requires_matching_program(self):
+        data = copy.deepcopy(SCREEN_DATA)
+        data['ProgramInfo'] = {'PROGRAM_ID': 'E040203'}
+        html = '<script>window["viewBag" + ""] = $.xextend(' + json.dumps(data) + ', {});</script>'
+        self.assertEqual(E.parse_order_input_page(html)['InitDatas'], data['InitDatas'])
+        with self.assertRaises(E.EcountError):
+            E.parse_order_input_page(html.replace('E040203', 'E040204'))
+
+    def test_screen_parser_discards_unneeded_account_password_field(self):
+        data = copy.deepcopy(SCREEN_DATA)
+        data['InitDatas']['CustPassModifyData'] = [{'PASSWORD': '모의암호필드', 'CS_MIN_ORDER_QTY': 'B'}]
+        html = '<script>window["viewBag" + "ESD004M_mock"] = $.xextend(' + json.dumps(data) + ', {});</script>'
+        parsed = E.parse_order_input_page(html)
+        self.assertNotIn('PASSWORD', parsed['InitDatas']['CustPassModifyData'][0])
+        self.assertEqual(parsed['InitDatas']['CustPassModifyData'][0]['CS_MIN_ORDER_QTY'], 'B')
+
+    def test_default_navigation_uses_matching_screen_prefix(self):
+        s = self.logged_in([(200, Headers(), SCREEN_HTML)])
+        s.load_order_input_data()
+        body = s.sent[-1][2]
+        self.assertEqual(body['PRG_ID'], 'E040203')
+        self.assertTrue(body['requestKey'].startswith('ESD004M_'))
+        with self.assertRaises(E.EcountError):
+            E.EcountSession.navigation_context('저장프로그램')
+
+    def test_order_list_loader_and_query_copy_read_context(self):
+        list_data = {'DefaultOption': {
+            'PROGRAM_ID': 'E040204', 'MENU_SEQ': '모의메뉴', 'outputFormType': 'OR020',
+            'basicFormSeq': 1, 'BASE_DATE_FROM': '20261101', 'BASE_DATE_TO': '20261111',
+        }}
+        html = '<script>window["viewBag" + "ESD005M_mock"] = $.xextend(' + json.dumps(list_data) + ', {});</script>'
+        response = json.dumps({'Status': '200', 'Data': {'TotalCount': 0, 'Data': []}})
+        s = self.logged_in([(200, Headers(), html), (200, Headers(), response)])
+        context = E.order_query_context(s.load_order_list_data())
+        original = copy.deepcopy(context)
+        self.assertEqual(s.query_orders(context), {'items': [], 'total_count': 0})
+        self.assertEqual(context, original)
+        self.assertEqual(s.sent[-1][2], {'Request': {'Data': original}})
+        self.assertIn(E.ORDER_LIST_API, s.sent[-1][1])
+        with self.assertRaises(E.EcountError):
+            s.query_orders(dict(context, PRG_ID='다른프로그램'))
+        self.assertEqual(len(s.sent), 6)
+
+    def test_form_loader_uses_screen_form_and_never_copies_account_data(self):
+        data = {'DefaultOption': {'FormKey': {'FORM_TYPE': 'OI020', 'FORM_SEQ': 3, 'COM_CODE': '모의비공개'}}}
+        s = self.logged_in([(200, Headers({'X-Compression': 'ecbzip'}),
+                            base64.b64encode(json.dumps({'Status': '200', 'Data': {'columns': []}}).encode()).decode())])
+        self.assertEqual(s.load_input_form(data), {'columns': []})
+        self.assertEqual(s.sent[-1][2]['FormSeq'], 3)
+        self.assertNotIn('모의비공개', json.dumps(s.sent[-1][2]))
+        with self.assertRaises(E.EcountError):
+            s.load_input_form({'DefaultOption': {'FormKey': {'FORM_TYPE': '다른양식', 'FORM_SEQ': 1}}})
+        self.assertEqual(len(s.sent), 5)
+
+    def test_add_text_master_detail_keys_and_empty_cleanup(self):
+        dto = E.serialize_add_text_dto('20261111', master_text={'ADD_TXT_02': '모의상단'},
+            detail_text=[('1', {'ADD_TXT_01': '모의비고\n원문'}), ('2', {'ADD_TXT_01': ''})])
+        self.assertEqual(dto['BizzClasCds'], ['ORD', 'ORD', 'ORD'])
+        self.assertEqual(len(dto['AddTxt']), 2)
+        self.assertEqual(dto['AddTxt'][0]['SLIP_CLAS_CD'], 'M')
+        self.assertEqual(dto['AddTxt'][0]['Key']['ADD_ITEM_SNO'], '0')
+        self.assertEqual(dto['AddTxt'][1]['SLIP_CLAS_CD'], 'T')
+        self.assertEqual(dto['AddTxt'][1]['Key'],
+            {'BIZZ_CLAS_CD': 'ORD', 'ADD_ITEM_ID': '20261111', 'ADD_ITEM_NO': 0, 'ADD_ITEM_SNO': '1'})
+        self.assertEqual(dto['AddTxt'][1]['ADD_TXT_01'], '모의비고\n원문')
+        self.assertEqual(dto['AddCd'], [])
+
+    def test_add_text_rejects_unknown_fields_and_duplicate_rows(self):
+        for rows in ([('1', {'ADDR': '모의주소'})], [('0', {})],
+                     [('1', {}), ('1', {})], [('1', {'ADD_TXT_01': None})]):
+            with self.subTest(rows=rows), self.assertRaises(E.EcountError):
+                E.serialize_add_text_dto('20261111', detail_text=rows)
+
+    def test_offline_projection_uses_adddto_and_uppercase_standard_fields(self):
+        draft = self.draft()
+        projection = E.draft_save_projection(draft)
+        self.assertFalse(projection['complete'])
+        self.assertEqual(projection['Details'][0]['REMARKS'], '모의수취인')
+        self.assertEqual(projection['Details'][0]['P_REMARKS2'], '모의신규주소')
+        self.assertNotIn('ADD_TXT_01', projection['Details'][0])
+        self.assertEqual(projection['AddDto']['AddTxt'][0]['ADD_TXT_01'], '모의비고만')
+        self.assertNotIn('Request', projection)
+        self.assertNotIn('기본주소금지', json.dumps(projection, ensure_ascii=False))
+
+    def test_unmapped_vendor_draft_remains_unbound(self):
+        args = dict(order_date='20261111', due_date='20261112', recipient='모의수취인',
+                    phone='모의연락처', address='모의신규주소', memo='')
+        draft = E.create_order_review(SCREEN_DATA, {'PROD_CD': '모의품목'}, 1, **args)
+        self.assertFalse(draft['delivery_mapping_verified'])
+        self.assertNotIn('delivery', draft)
+        self.assertEqual(draft['unmapped_delivery']['address'], '모의신규주소')
+        projection = E.draft_save_projection(draft)
+        self.assertNotIn('REMARKS', projection['Details'][0])
+        self.assertEqual(projection['AddDto']['AddTxt'], [])
+
+    def test_minimum_quantity_policy_is_resolved_without_exposing_amounts(self):
+        product = dict(PRICE='모의단가', PRICE_VAT_INCLUDE='모의단가', PRICE_VAT_YN='N',
+                       VAT_YN='1', VAT_RATE_BY='1', CS_MIN_ORDER_QTY='2')
+        config = {'LookupConfig': {'MIN_ORDER_POLICY_BY_ID': 'B', 'CS_MIN_ORDER_QTY': 'Y'}}
+        result = E.review_product_policy(config, product, 1)
+        self.assertTrue(result['minimum_policy_resolved'])
+        self.assertFalse(result['minimum_satisfied'])
+        self.assertFalse(result['amounts_verified'])
+        self.assertNotIn('모의단가', json.dumps(result))
+        self.assertTrue(E.review_product_policy(config, product, 2)['minimum_satisfied'])
+        self.assertIsNone(E.review_product_policy({}, product, 1)['minimum_satisfied'])
+
+    def test_unverified_cache_and_temporary_save_routes_are_blocked(self):
+        s = E.EcountSession()
+        for path in ('/ECERP/SVC/Popup/GetXFormCache', '/ECAPI/SVC/TemporarySave/Save',
+                     '/ECAPI/SVC/Inventory/SaleOrder/Save?mode=print'):
+            with self.subTest(path=path), self.assertRaises(E.EcountError):
+                s._send('GET', E.PORTAL + path)
+        self.assertEqual(s.trace, [])
 
 
 if __name__ == '__main__':

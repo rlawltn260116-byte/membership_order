@@ -68,7 +68,7 @@ export function normalizeRow(row, job, index) {
   const recipient = { name, address, detail, phone, postcode, memo: String(row.memo ?? row["비고(내역)"] ?? "") };
   // 원본 주문번호+품명+옵션은 큐 작업 ID와 독립적인 원장 키다. 배송지·고객정보는 해시에 넣지 않는다.
   const sourceKey = createHash("sha256").update(JSON.stringify([vendor, orderId, mapped.model ?? norm(row.productName ?? row["품명"]), mapped.optionName ?? norm(row.option)])).digest("hex");
-  return { lineNo, vendor, orderId, quantity: Number(quantity), recipient, sourceKey, mapping: mapped,
+  return { lineNo, vendor, orderId, quantity: Number(quantity), expectedPrice: row.expectedPrice ?? "", recipient, sourceKey, mapping: mapped,
     status: reason ? "HOLD" : "READY", reason };
 }
 

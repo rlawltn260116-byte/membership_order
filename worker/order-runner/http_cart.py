@@ -165,6 +165,10 @@ class OrderDraft:
 
     def clear(self):
         self.fields.clear()
+        if hasattr(self, 'expected_fields'):
+            self.expected_fields.clear()
+        if hasattr(self, 'amount_snapshot'):
+            self.amount_snapshot = ()
 
 
 def build_order_draft(vendor, html, row, recipient):

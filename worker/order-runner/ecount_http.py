@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 PORTAL = 'https://c-portal.ecount.com'
 UA = 'Mozilla/5.0'
@@ -24,10 +25,14 @@ ZONE_API = '/ec56/api/login/action/GetZoneAction'
 TS_API = '/ec56/api/login/action/GetZoneInfoAction'
 LOGIN_PROCESSOR = '/ec56/view/login/cs_login_processor'
 ORDER_INPUT_PAGE = '/ECERP/SVC/CSA/ESD004M'
+ORDER_LIST_PAGE = '/ECERP/SVC/CSA/ESD005M'
+ORDER_LIST_API = '/ECAPI/SVC/Common/SlipTransfer/GetListXFormSlipCommon'
+FORM_VIEW_API = '/ECAPI/Common/Form/GetFormView'
 PRODUCT_SEARCH_API = '/ECAPI/SVC/Inventory/Basic/GetListProdForSearchPopup'
 # 이 모듈이 보내는 POST의 전부다. 저장·전표·삭제 주소는 허용하지 않는다.
 READ_POST_PATHS = {ZONE_API, TS_API, LOGIN_PROCESSOR, ORDER_INPUT_PAGE}
 READ_POST_PATHS.add(PRODUCT_SEARCH_API)
+READ_POST_PATHS.update({ORDER_LIST_PAGE, ORDER_LIST_API, FORM_VIEW_API})
 SEARCH_CONTEXT_FIELDS = (
     'PARAM', 'CANCEL', 'INPUT_PROGRAM_ID', 'INPUT_CUST', 'INPUT_WH_CD',
     'INPUT_WH_CD_T', 'INPUT_IO_CODE', 'BARCODE_SEARCH', 'SERIAL_DATE',
@@ -116,7 +121,7 @@ def _ecount_host(url):
 
 def decode_api_response(text, *, compression=''):
     """관찰된 JSON 또는 Base64(UTF-8 JSON)를 해독한다. 실패 본문은 오류에 넣지 않는다."""
-    if compression:
+    if compression not in ('', 'ecbzip'):
         raise EcountError('미검증 응답 압축 방식')
     try:
         try:
@@ -157,7 +162,15 @@ def parse_order_input_page(html):
     반환값에는 거래처 문맥이 있으므로 메모리에서만 사용한다. 점이 들어간 전역 설정은
     브라우저의 전역 부수 효과에 해당하므로 반환하지 않는다.
     """
-    match = re.search(r'window\s*\[\s*[\'"]viewBag[\'"]\s*\+\s*[\'"]ESD004M_[^\'"]+[\'"]\s*\]\s*=\s*\$\.xextend\(', html)
+    return parse_screen_page(html, 'ESD004M')
+
+
+def parse_screen_page(html, screen_name):
+    """조회 화면 JSON만 해독한다. 독립 HTTP 응답은 화면 ID가 비어 있다."""
+    if screen_name not in ('ESD004M', 'ESD005M'):
+        raise EcountError('허용하지 않은 화면')
+    match = re.search(r'window\s*\[\s*[\'"]viewBag[\'"]\s*\+\s*[\'"](' +
+                      screen_name + r'_[^\'"]+|)[\'"]\s*\]\s*=\s*\$\.xextend\(', html)
     if not match:
         raise EcountError('주문 입력 화면 데이터 없음')
     try:
@@ -169,10 +182,23 @@ def parse_order_input_page(html):
             raise ValueError()
         encrypted = data.pop('_x_', '')
         if encrypted:
-            data.update({k: v for k, v in _decode_viewbag_xor(encrypted).items() if '.' not in k})
-        view = data['InitDatas']['ViewData']
-        if not isinstance(view['Master'], dict) or not isinstance(view['Details'], list):
+            decoded = _decode_viewbag_xor(encrypted)
+            inventory = decoded.get('ecount.config.inventory', {})
+            data['LookupConfig'] = {k: inventory[k] for k in (
+                'OUT_DEC_P', 'OUT_DEC_Q', 'CS_MIN_ORDER_QTY') if k in inventory}
+            data['LookupConfig']['MIN_ORDER_POLICY_BY_ID'] = decoded.get('ecount.user', {}).get('CS_MIN_ORDER_QTY')
+            data.update({k: v for k, v in decoded.items() if '.' not in k})
+        if not match.group(1) and data.get('ProgramInfo', {}).get('PROGRAM_ID') != {
+                'ESD004M': 'E040203', 'ESD005M': 'E040204'}[screen_name]:
             raise ValueError()
+        if screen_name == 'ESD004M':
+            view = data['InitDatas']['ViewData']
+            if not isinstance(view['Master'], dict) or not isinstance(view['Details'], list):
+                raise ValueError()
+            # 품목 조회·초안 작성에는 계정의 암호 필드가 필요하지 않다.
+            for account in data['InitDatas'].get('CustPassModifyData') or []:
+                if isinstance(account, dict):
+                    account.pop('PASSWORD', None)
         return data
     except (ValueError, TypeError, KeyError):
         raise EcountError('주문 입력 화면 구조 변경') from None
@@ -186,16 +212,85 @@ def build_product_search_body(context, keyword):
         raise EcountError('검색어 없음')
     data = {k: copy.deepcopy(context[k]) for k in SEARCH_CONTEXT_FIELDS}
     data['keyword'] = keyword
+    # c04.setRequestParameter와 copyParamToRequestData: 실제 검색 조건은 PARAM이다.
+    data['PARAM'] = keyword
     # 실제 본문은 Request.Data와 루트에 중복된다. CANCEL은 내부에만 있다.
     return {'Request': {'Data': data}, **{k: copy.deepcopy(v) for k, v in data.items() if k != 'CANCEL'}}
+
+
+def product_context_from_screen(screen_data):
+    """신규 주문 화면과 해당 업체 설정에서 빈 그리드 검색 문맥을 만든다."""
+    try:
+        opt, init = screen_data['DefaultOption'], screen_data['InitDatas']
+        master, warehouse = init['ViewData']['Master'], init.get('CustWhData') or {}
+        if opt['PROGRAM_ID'] != 'E040203' or not opt['isFromCS']:
+            raise ValueError()
+        return {
+            'PARAM': '', 'CANCEL': 'N', 'INPUT_PROGRAM_ID': opt['PROGRAM_ID'],
+            'INPUT_CUST': master['CUST'], 'INPUT_WH_CD': warehouse.get('WH_CD', ''),
+            'INPUT_WH_CD_T': '', 'INPUT_IO_CODE': master.get('IO_TYPE', ''),
+            'BARCODE_SEARCH': 'N', 'SERIAL_DATE': opt['serialTime'],
+            'PROD_SEARCH_TYPE': '', 'DecP': screen_data['LookupConfig']['OUT_DEC_P'],
+            'errorInfo': {'programId': opt['PROGRAM_ID'], 'pageId': '', 'menuTitle': '주문서입력'},
+            'SerialList': [],
+        }
+    except (KeyError, TypeError, ValueError):
+        raise EcountError('신규 주문 화면의 검색 문맥 변경') from None
+
+
+def order_query_context(screen_data):
+    """조회 화면의 기본 기간·양식만 사용한다. 검색 결과와 수취인 값은 복사하지 않는다."""
+    try:
+        opt = screen_data['DefaultOption']
+        if opt['PROGRAM_ID'] != 'E040204':
+            raise ValueError()
+        return {
+            'MENU_SEQ': opt['MENU_SEQ'], 'FORM_SER': 1, 'PRG_ID': opt['PROGRAM_ID'],
+            'FORM_TYPE': opt['outputFormType'], 'FORM_SEQ': opt['basicFormSeq'],
+            'BASE_DATE_FROM': opt['BASE_DATE_FROM'], 'BASE_DATE_TO': opt['BASE_DATE_TO'],
+            'PAGE_CURRENT': 1, 'PAGE_SIZE': 20, 'P_FLAG': '', 'GB_TYPE': '', 'PARAM': '',
+            'SEARCH_CRITERIA': {}, 'QUICK_SEARCH_TYPE': '', 'PROD_CD': '', 'REMARKS': '',
+        }
+    except (KeyError, TypeError, ValueError):
+        raise EcountError('주문 조회 화면 문맥 변경') from None
+
+
+def serialize_add_text_dto(order_date, *, master_text=None, detail_text=()):
+    """화면 이벤트의 추가문자 직렬화를 오프라인으로 재현한다. 요청을 보내지 않는다.
+
+    빈 추가문자는 이벤트에서 제외된다. BizzClasCds는 빈 배열 행을 정리한 뒤에도
+    헤더와 그리드 행마다 추가한 순서를 유지하는 화면 코드의 동작을 따른다.
+    """
+    dto = {k: [] for k in ('AddTxt', 'AddLTxt', 'AddNum', 'AddDate', 'AddCd', 'BizzClasCds')}
+    rows = [('M', '0', master_text or {}), *[('T', str(no), values) for no, values in detail_text]]
+    seen = set()
+    for scope, number, values in rows:
+        if not isinstance(values, dict) or (scope == 'T' and (
+                not re.fullmatch(r'[1-9]\d*', number) or number in seen)):
+            raise EcountError('추가문자 행 구조 오류')
+        seen.add(number)
+        dto['BizzClasCds'].append('ORD')
+        entry = {}
+        for field, value in values.items():
+            if not re.fullmatch(r'ADD_TXT_0[1-6]', field) or not isinstance(value, str):
+                raise EcountError('미검증 추가문자 필드')
+            if value:
+                entry[field] = value
+        if entry:
+            entry.update(SLIP_CLAS_CD=scope, Key={
+                'BIZZ_CLAS_CD': 'ORD', 'ADD_ITEM_ID': order_date,
+                'ADD_ITEM_NO': 0, 'ADD_ITEM_SNO': number,
+            })
+            dto['AddTxt'].append(entry)
+    return dto
 
 
 def create_order_draft(screen_data, product, quantity, *, order_date, due_date,
                        recipient, phone, address, memo='', delivery_fields=None):
     """네트워크 없는 검토용 초안. 저장 본문·URL·제출 함수는 만들지 않는다.
 
-    배송 필드는 업체별 양식을 확인한 호출자가 명시해야 한다. 특히 ADD_TXT_01의
-    AddDto 직렬화는 미검증이므로 저장 가능한 본문으로 취급하지 않는다.
+    배송 필드는 업체별 양식을 확인한 호출자가 명시해야 한다. 금액과 전체 저장
+    본문은 미검증이므로 반환 객체를 전송 가능한 요청으로 취급하지 않는다.
     """
     if delivery_fields != MYEONGSEONG_DELIVERY_FIELDS:
         raise EcountError('검증된 업체별 배송 필드 매핑 필요')
@@ -222,7 +317,7 @@ def create_order_draft(screen_data, product, quantity, *, order_date, due_date,
         raise EcountError('초안의 화면·품목 정보 누락') from None
     return {
         'kind': 'ecount_review_draft', 'submission_ready': False,
-        'hold_reasons': ['저장 금지', '추가 필드 AddDto 직렬화와 업체별 양식 검증 필요'],
+        'hold_reasons': ['저장 금지', '전체 저장 본문과 금액·정책 검증 필요'],
         'dates': {'REQ_DATE': order_date, 'TIME_DATE': due_date},
         'line': {'PROD_CD': product['PROD_CD'], 'PROD_DES': product.get('PROD_DES', ''),
                  'SIZE_DES': product.get('SIZE_DES', ''), 'QTY': str(qty)},
@@ -232,6 +327,64 @@ def create_order_draft(screen_data, product, quantity, *, order_date, due_date,
         # 수취인 데이터와 거래처 기본 주소를 섞지 않는다. 메모도 원문만 유지한다.
         'address_source': 'new', 'amounts_verified': False,
     }
+
+
+def create_order_review(screen_data, product, quantity, *, order_date, due_date,
+                        recipient, phone, address, memo='', delivery_fields=None):
+    """세 업체 공통 검토 초안. 매핑 미확정이면 배송값을 필드에 배치하지 않고 보류한다."""
+    draft = create_order_draft(screen_data, product, quantity, order_date=order_date,
+        due_date=due_date, recipient=recipient, phone=phone, address=address, memo=memo,
+        delivery_fields=delivery_fields or MYEONGSEONG_DELIVERY_FIELDS)
+    draft['delivery_mapping_verified'] = delivery_fields == MYEONGSEONG_DELIVERY_FIELDS
+    if not draft['delivery_mapping_verified']:
+        draft.pop('delivery')
+        draft['unmapped_delivery'] = dict(recipient=recipient, phone=phone, address=address, memo=memo)
+        draft['hold_reasons'].append('업체 입력 화면의 배송 필드 매핑 미확정')
+    return draft
+
+
+def draft_save_projection(draft):
+    """저장 스크립트와 비교할 일부 필드만 투영한다. 전체 요청·주소·메서드는 만들지 않는다."""
+    if draft.get('kind') != 'ecount_review_draft' or draft.get('submission_ready') is not False:
+        raise EcountError('검토용 초안 필요')
+    detail = copy.deepcopy(draft['line'])
+    add_text = {}
+    for field, value in draft.get('delivery', {}).items():
+        if field.startswith('ADD_TXT_'):
+            add_text[field] = value
+        else:
+            detail[field.upper()] = value
+    detail['Key'] = {'SER_NO': '1'}
+    dto = serialize_add_text_dto(draft['dates']['REQ_DATE'], detail_text=[('1', add_text)])
+    return {
+        'Master': copy.deepcopy(draft['dates']), 'Details': [detail], 'AddDto': dto,
+        'complete': False,
+        'hold_reasons': ['전체 Request·Master·Details 미구현', '금액·세금·업체별 정책 미검증'] +
+                        ([] if 'delivery' in draft else ['배송 필드 미배치']),
+    }
+
+
+def review_product_policy(screen_data, product, quantity):
+    """조회값의 형식·최소수량만 판정한다. 단가·금액 원문이나 전체 검증 성공을 반환하지 않는다."""
+    price_fields = ('PRICE', 'PRICE_VAT_INCLUDE', 'PRICE_VAT_YN', 'VAT_YN', 'VAT_RATE_BY')
+    result = {'price_fields_present': all(k in product for k in price_fields),
+              'minimum_quantity_valid': False, 'minimum_satisfied': None,
+              'minimum_policy_resolved': False, 'amounts_verified': False}
+    try:
+        qty, minimum = Decimal(str(quantity)), Decimal(str(product['CS_MIN_ORDER_QTY']))
+        if not qty.is_finite() or qty <= 0 or not minimum.is_finite() or minimum < 0:
+            raise ValueError()
+        config = screen_data['LookupConfig']
+        mode = config.get('MIN_ORDER_POLICY_BY_ID')
+        if mode in (None, 'B'):
+            mode = config.get('CS_MIN_ORDER_QTY')
+        result['minimum_quantity_valid'] = True
+        result['minimum_policy_resolved'] = mode in ('Y', 'N')
+        if mode in ('Y', 'N'):
+            result['minimum_satisfied'] = mode == 'N' or qty >= minimum
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        pass
+    return result
 
 
 class EcountSession:
@@ -353,13 +506,15 @@ class EcountSession:
             raise EcountError('조회 실패로 중단')
         return status, headers.get('Location', ''), text
 
-    def load_order_input_data(self, navigation_context):
-        """브라우저 메뉴 이동의 조회 POST 형식. HTTP 단독 실서버 재현은 아직 미검증이다.
+    def load_order_input_data(self, navigation_context=None):
+        """관찰한 메뉴 이동 POST로 초기 데이터를 읽는다. 저장 요청은 보내지 않는다.
 
-        화면 정의 JSON은 HTML의 viewBag에 들어 있다. 메뉴 문맥은 현재 세션에서 얻은
-        것을 전달하며 초기화·다시 작성·저장 요청을 보내지 않는다.
+        화면 정의 JSON은 HTML의 viewBag에 들어 있다. 관찰한 여섯 필드에 새 화면
+        식별자를 넣고 초기화·다시 작성·저장 요청을 보내지 않는다.
         """
         self._require_login()
+        if navigation_context is None:
+            navigation_context = self.navigation_context('E040203')
         fields = ('alreadyIncludedLayout', 'requestKey', 'viewer_id', 'panel_id',
                   'is_from_left_menu', 'PRG_ID')
         if not isinstance(navigation_context, dict) or any(k not in navigation_context for k in fields):
@@ -367,6 +522,33 @@ class EcountSession:
         body = {k: copy.deepcopy(navigation_context[k]) for k in fields}
         _, _, html = self._read_post(ORDER_INPUT_PAGE, body)
         return parse_order_input_page(html)
+
+    @staticmethod
+    def navigation_context(program_id):
+        if program_id not in ('E040203', 'E040204'):
+            raise EcountError('허용하지 않은 메뉴')
+        page = {'E040203': 'ESD004M', 'E040204': 'ESD005M'}[program_id]
+        return {'alreadyIncludedLayout': True, 'requestKey': page + '_' + uuid.uuid4().hex,
+                'viewer_id': '', 'panel_id': '', 'is_from_left_menu': True, 'PRG_ID': program_id}
+
+    def load_order_list_data(self):
+        self._require_login()
+        _, _, html = self._read_post(ORDER_LIST_PAGE, self.navigation_context('E040204'))
+        return parse_screen_page(html, 'ESD005M')
+
+    def query_orders(self, context):
+        """현재 화면의 검색 조건을 복사해 읽기 조회한다. 반환 원문은 메모리 전용이다."""
+        self._require_login()
+        required = ('PRG_ID', 'BASE_DATE_FROM', 'BASE_DATE_TO', 'PAGE_CURRENT', 'PAGE_SIZE')
+        if not isinstance(context, dict) or any(k not in context for k in required):
+            raise EcountError('주문 조회 문맥 누락')
+        if context['PRG_ID'] != 'E040204':
+            raise EcountError('허용하지 않은 조회 프로그램')
+        _, headers, text = self._read_post(ORDER_LIST_API, {'Request': {'Data': copy.deepcopy(context)}}, xce=True)
+        data = self._decode_response(text, compression=headers.get('X-Compression', '')).get('Data')
+        if not isinstance(data, dict) or not isinstance(data.get('Data'), list):
+            raise EcountError('주문 조회 결과 구조 변경')
+        return {'items': data['Data'], 'total_count': data.get('TotalCount')}
 
     def lookup_products(self, keyword, context):
         """검색과 정확한 품목코드 선택에 쓰는 읽기 POST. 응답 원문을 기록하지 않는다."""
@@ -377,6 +559,24 @@ class EcountSession:
         if not isinstance(data, dict) or not isinstance(data.get('Data'), list):
             raise EcountError('품목 조회 결과 구조 변경')
         return {'items': data['Data'], 'total_count': data.get('TotalCount')}
+
+    def load_input_form(self, screen_data):
+        """화면이 지정한 입력 양식의 열 정의를 조회한다."""
+        self._require_login()
+        try:
+            key = screen_data['DefaultOption']['FormKey']
+            if key['FORM_TYPE'] != 'OI020':
+                raise ValueError()
+            body = dict(FormType=key['FORM_TYPE'], FormSeq=key['FORM_SEQ'],
+                        FormTypeMaster=None, ReturnType=None, BasicType=None,
+                        IsConvertColumnCode=None, ViewType=None)
+        except (KeyError, TypeError, ValueError):
+            raise EcountError('주문 입력 양식 문맥 변경') from None
+        _, headers, text = self._read_post(FORM_VIEW_API, body, xce=True)
+        data = self._decode_response(text, compression=headers.get('X-Compression', '')).get('Data')
+        if not isinstance(data, dict) or not isinstance(data.get('columns'), list):
+            raise EcountError('주문 입력 양식 구조 변경')
+        return data
 
     def _decode_response(self, text, *, compression=''):
         try:

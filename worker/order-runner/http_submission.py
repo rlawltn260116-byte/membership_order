@@ -37,7 +37,7 @@ receiverPhonePrefixCode receiverState receiverZipcode receiverZonecode returnUrl
 totalCouponDeliveryDcPrice totalCouponDeliveryPrice totalCouponGoodsDcPrice totalCouponGoodsMileage
 totalCouponOrderDcPrice totalCouponOrderMileage totalCouponOrderPrice totalDeliveryCharge totalDeliveryFreePrice
 totalMemberDcPrice totalMemberOverlapDcPrice visitAddress visitMemo visitName visitPhone shipping settleKind
-termAgree_orderCheck'''.split())
+'''.split())
 
 
 def parse_order_numbers(vendor, html, *, completion=False):
@@ -84,8 +84,8 @@ def validate_request(vendor, url, method, fields, expected_fields, *, totals_ver
     else:
         if len(values(fields, 'cartSno[]')) != 1 or one(fields, 'shipping') != 'shippingNew':
             raise LoginError('직접 입력·단일 장바구니 행 미확인')
-        if one(fields, 'settleKind') != 'gb' or one(fields, 'termAgree_orderCheck') not in ('y', 'Y'):
-            raise LoginError('결제·필수 동의 분기 미확인')
+        if one(fields, 'settleKind') != 'gb' or not one(fields, 'bankAccount').strip() or not one(fields, 'bankSender').strip():
+            raise LoginError('무통장 입금·계좌·입금자 미확인')
         required = ('receiverName', 'receiverPhone', 'receiverCellPhone', 'receiverZonecode', 'receiverAddress')
     if any(not one(fields, k).strip() for k in required):
         raise LoginError('신규 배송지 필수값 누락')
@@ -98,6 +98,8 @@ def submit_prepared(session, draft, *, authorized=False, environ=None, transport
         raise LoginError('HTTP 최종 제출 잠금')
     if not session.authenticated or getattr(session, 'submission_attempted', False):
         raise LoginError('인증 미확인 또는 제출 재시도 금지')
+    from http_amounts import validate_amount_snapshot
+    validate_amount_snapshot(draft)
     url = ENDPOINTS[session.vendor]
     validate_request(session.vendor, url, 'POST', draft.fields, draft.expected_fields,
                      totals_verified=draft.report.get('submission_ready') is True)

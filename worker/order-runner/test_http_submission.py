@@ -7,6 +7,7 @@ from unittest.mock import Mock
 from http_cart import OrderDraft
 from http_login_draft import LoginError
 from http_submission import ENDPOINTS, parse_order_numbers, submit_prepared, validate_request
+from http_amounts import mark_verified
 
 
 def draft(vendor):
@@ -15,10 +16,11 @@ def draft(vendor):
                   ('od_settle_case', '월 마감 정산'), ('pen_type', '0')]
         fields += [(k, '모의값') for k in ('od_b_name', 'od_b_tel', 'od_b_hp', 'od_b_zip', 'od_b_addr1')]
     else:
-        fields = [('cartSno[]', 'mock-row'), ('shipping', 'shippingNew'), ('settleKind', 'gb'), ('termAgree_orderCheck', 'y')]
+        fields = [('cartSno[]', 'mock-row'), ('shipping', 'shippingNew'), ('settleKind', 'gb'), ('bankAccount', 'mock-bank'), ('bankSender', '모의 입금자')]
         fields += [(k, '모의값') for k in ('receiverName', 'receiverPhone', 'receiverCellPhone', 'receiverZonecode', 'receiverAddress')]
     value = OrderDraft(fields, {'submission_ready': True})
     value.expected_fields = list(fields)
+    mark_verified(vendor, value)
     return value
 
 

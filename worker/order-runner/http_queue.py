@@ -13,6 +13,7 @@ from http_cart import (CartRow, Document, OrderDraft, build_order_draft, control
 from http_login_draft import LoginError, StopSignalError
 from http_preparation import PreparationSession, eroum_product_fields
 from http_submission import submit_prepared
+from http_amounts import quote_request, verify_eroum, verify_bofeel
 
 CATALOG = json.loads((Path(__file__).parent / 'data' / 'b2b-product-map.json').read_text(encoding='utf-8'))
 
@@ -34,6 +35,9 @@ class QueueSession(PreparationSession):
         super().__init__(vendor)
         self.catalog_count = 0
         self.catalog_time = 0
+
+    def read_amount(self, path, fields):
+        return quote_request(self, path, fields)
 
     def catalog_object(self, mapping):
         key = mapping['productId']
@@ -126,6 +130,12 @@ def prepare_eroum_group(session, group, source, objects):
               'submission_ready': False, 'totals_recalculated': False}
     draft = OrderDraft(fields, report)
     draft.expected_fields = copy.deepcopy(fields)
+    try:
+        verify_eroum(session, draft, group, source, objects)
+    except StopSignalError:
+        raise
+    except LoginError:
+        draft.report['validation_hold'] = True
     return draft
 
 
@@ -174,7 +184,8 @@ def prepare_bofeel_group(session, group, *, retain_for_submit=False):
     draft = None
     cleanup = True
     try:
-        draft = build_order_draft('bofeel', session.open_order(), session.created_row, first['recipient'])
+        source = session.open_order()
+        draft = build_order_draft('bofeel', source, session.created_row, first['recipient'])
         if not draft.report['valid']:
             raise LoginError('보필 직접 입력 주문서 대조 실패')
         # 주소 저장·회원 반영 필드는 값이 없어야 한다. 선택된 상태를 보존해 제출하지 않는다.
@@ -183,8 +194,13 @@ def prepare_bofeel_group(session, group, *, retain_for_submit=False):
         draft.fields = replace(draft.fields, 'receiverZipcode', '')
         draft.report['submission_ready'] = False
         draft.expected_fields = copy.deepcopy(draft.fields)
-        # 실제 준비는 현재 false다. 추후 제출 검증 완료 시에만 같은 행을 남겨 둔다.
-        if retain_for_submit:
+        try:
+            verify_bofeel(session, draft, group, source)
+        except StopSignalError:
+            raise
+        except LoginError:
+            draft.report['validation_hold'] = True
+        if retain_for_submit and draft.report['submission_ready']:
             cleanup = False
             session.retained_for_submit = True
         return draft
@@ -192,7 +208,7 @@ def prepare_bofeel_group(session, group, *, retain_for_submit=False):
         cleanup = False
         raise
     finally:
-        # PREPARE가 끝나면 이 실행에서 담은 행만 삭제한다. 제출 기능은 아직 금액 검증으로 잠겨 있다.
+        # PREPARE 종료나 검증 실패 시 이 실행에서 담은 행만 삭제한다.
         if cleanup and session.created_row:
             cleanup_bofeel(session, mapping, quantity)
 
@@ -236,11 +252,13 @@ def run(vendor, groups, env, session_factory=QueueSession, execution_mode='PREPA
                 draft = (prepare_eroum_group(session, group, source, objects) if vendor == 'eroum'
                          else prepare_bofeel_group(session, group, retain_for_submit=execution_mode == 'SUBMIT' and len(groups) == 1))
                 drafts.append(draft)
+                if draft.report.get('submission_ready') is not True:
+                    raise LoginError('금액·결제·동의 검증 보류')
                 for row in group['rows']:
                     details.append({'lineNo': row['lineNo'], 'status': 'READY', 'productId': row['mapping']['productId'],
                         'quantity': row['quantity'], 'vendor': vendor, 'orderGroup': index + 1,
-                        'addressMode': group['addressMode'], 'submissionReady': False,
-                        'reason': 'HTTP 상품·수량·신규 배송지 초안 대조 완료. 최종 금액·결제 검증 미완료로 제출은 잠겨 있습니다.'})
+                        'addressMode': group['addressMode'], 'submissionReady': True,
+                        'reason': 'HTTP 금액·배송비·결제·동의·신규 배송지 대조 완료. 실제 제출 잠금은 별도입니다.'})
             except Exception as error:
                 interrupted = True
                 stop_requested = isinstance(error, StopSignalError)
@@ -258,8 +276,7 @@ def run(vendor, groups, env, session_factory=QueueSession, execution_mode='PREPA
               'sourceKey': groups[0]['rows'][0]['sourceKey'] if len(groups) == 1 and len(groups[0]['rows']) == 1 else '',
               'finalEmpty': not interrupted and session.created_row is None,
               'cartVerified': not interrupted})
-        # 현재 초안은 금액·결제 검증 미완료여서 이 분기로 들어가지 않는다.
-        # 검증을 보완한 뒤에도 부모의 증명·원장·행 잠금 승인이 있어야 같은 세션으로 한 번 전송한다.
+        # 금액 검증 뒤에도 부모의 증명·원장·행 잠금 승인이 필요하다.
         if execution_mode == 'SUBMIT' and submission_ready and env.get('ENABLE_B2B_HTTP_SUBMIT') == 'true':
             command = json.loads(sys.stdin.readline(4097) or '{}')
             if command.get('submit') is True and command.get('sourceKey') == groups[0]['rows'][0]['sourceKey']:
