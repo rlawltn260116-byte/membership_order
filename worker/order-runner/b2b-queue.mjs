@@ -84,9 +84,10 @@ export async function prepareHttpJob(job, { env = process.env, runVendor = runQu
   const plan = planOrders(job);
   if (job.executionMode === "SUBMIT") {
     const problem = submissionProblem(job, env);
-    if (problem) return { canSubmit: false, details: plan.rows.map((r) => ({ lineNo: r.lineNo, status: "HOLD", reason: problem })) };
+    if (problem) return { canSubmit: false, details: plan.rows.map((r) => ({ lineNo: r.lineNo, status: "HOLD",
+      reason: [problem, r.reason].filter(Boolean).join("; "), reviewNotes: r.reviewNotes })) };
   }
-  const details = plan.rows.filter((r) => r.status === "HOLD").map((r) => ({ lineNo: r.lineNo, status: "HOLD", reason: r.reason }));
+  const details = plan.rows.filter((r) => r.status === "HOLD").map((r) => ({ lineNo: r.lineNo, status: "HOLD", reason: r.reason, reviewNotes: r.reviewNotes }));
   let canSubmit = false;
   for (const vendor of ["eroum", "bofeel"]) {
     const groups = plan.groups.filter((g) => g.vendor === vendor);

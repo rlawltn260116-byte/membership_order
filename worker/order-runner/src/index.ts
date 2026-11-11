@@ -61,6 +61,7 @@ type WorkerDetail = {
   totalPrice?: number;
   orderFormUrl?: string;
   shippingNotes?: string[];
+  reviewNotes?: string[];
   orderNumber?: string;
   submittedAt?: string;
   vendor?: string;

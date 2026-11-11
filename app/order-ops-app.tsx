@@ -115,6 +115,7 @@ type Job = {
       lineNo: number;
       status: "READY" | "FAILED" | "HOLD";
       reason: string;
+      reviewNotes?: string[];
       productId?: string;
       unitPrice?: number;
       quantity?: number;
@@ -1371,6 +1372,7 @@ function WorkerReviewPanel({
                     <TableCell><Badge className={statusClass(detail.status)}>{statusLabel(detail.status)}</Badge></TableCell>
                     <TableCell className="whitespace-normal">
                       {detail.reason}
+                      {detail.reviewNotes?.length ? <div className="mt-2 font-medium text-amber-800">특이사항: {detail.reviewNotes.join(" / ")}</div> : null}
                       {report.transport === "HTTP" && detail.orderGroup ? <div className="mt-1 text-xs text-slate-500">{detail.vendor === "bofeel" ? "보필" : "이로움"} · 배송지 묶음 {detail.orderGroup} · {detail.addressMode === "shippingNew" ? "직접 입력" : "신규 배송지"} · 상품 {detail.productId}</div> : null}
                       {detail.orderNumber ? <div className="mt-1 font-semibold text-emerald-700">주문번호 {detail.orderNumber}</div> : null}
                       {detail.submittedAt ? <div className="mt-1 text-xs text-slate-500">제출 {formatDateTime(detail.submittedAt)}</div> : null}

@@ -22,7 +22,7 @@ CATALOG = json.loads((Path(__file__).parent / 'data' / 'b2b-product-map.json').r
 
 def check_mapping(vendor, row):
     mapping = row['mapping']
-    matches = [item for item in CATALOG[vendor] if item['model'] == mapping['model'] and
+    matches = [item for item in CATALOG[vendor] if not item.get('holdReason') and item['model'] == mapping['model'] and
                (item.get('it_id') or item.get('goodsNo')) == mapping['productId'] and
                any(option['name'] == mapping['optionName'] and
                    option.get('io_id', option.get('optionSno')) == mapping['optionId'] for option in item['options'])]

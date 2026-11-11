@@ -27,10 +27,19 @@ export function mapProduct(vendor, row) {
   if (vendor === "bofeel" && matches.some(m => !m.suffix)) matches.splice(0, matches.length, ...matches.filter(m => !m.suffix));
   if (matches.length !== 1) return { status: "HOLD", reason: "상품 연결표와 정확히 일치하는 품명·모델이 없습니다." };
   const { item, suffix } = matches[0];
+  if (item.holdReason) return { status: "HOLD", model: item.model, productId: item.it_id ?? item.goodsNo,
+    reason: item.holdReason, reviewNotes: [item.holdReason] };
   const explicit = norm(row.option);
   if (explicit && suffix && explicit !== suffix) return { status: "HOLD", reason: "품명의 옵션과 별도 옵션 열이 다릅니다." };
   let wanted = explicit || suffix;
   wanted = optionAliases[vendor]?.[item.model]?.[wanted] ?? wanted;
+  // 수량 구간은 수량으로 계산하지만 색상 등 사람이 고르는 옵션은 채우지 않는다.
+  const quantityTier = /^\d+개\s*(?:~\s*\d+개|이상)$/;
+  const needsChoice = item.options.some(option => option.name.split(" / ").some(part => part && !quantityTier.test(part)));
+  if (!wanted && needsChoice) {
+    const note = `${item.optionLabel || "옵션"} 미기재: 사람 검수 필요`;
+    return { status: "HOLD", model: item.model, productId: item.it_id ?? item.goodsNo, optionName: "", reason: note, reviewNotes: [note] };
+  }
   const quantity = Number(row.quantity ?? row["주문수량"]);
   const options = item.options.filter((option) => {
     if (option.name === wanted) return true;
@@ -66,7 +75,7 @@ export function normalizeRow(row, job, index) {
   else if (!/^\d{5}$/.test(postcode)) reason = "검증된 우편번호를 입력해야 합니다. 원본 주소에서 추측하지 않습니다.";
   else if (!/^[1-9]\d*$/.test(quantity) || !Number.isSafeInteger(Number(quantity))) reason = "수량은 양의 정수여야 합니다.";
   const mapped = mapProduct(vendor, row);
-  reason ||= mapped.status === "HOLD" ? mapped.reason : "";
+  if (mapped.status === "HOLD") reason = [reason, mapped.reason].filter(Boolean).join("; ");
   const recipient = { name, address, detail, phone, postcode, memo: String(row.memo ?? row["비고(내역)"] ?? "") };
   const originalFile = norm(row.sourceFile ?? job.filename ?? job.sourceFile);
   const file = originalFile.split(/[\\/]/).at(-1).replace(/\.[^.]+$/, "")
@@ -77,7 +86,7 @@ export function normalizeRow(row, job, index) {
   const sourceKey = createHash("sha256").update(JSON.stringify(["source-row-v2", vendor, file, date, lineNo,
     name, address, detail, phone, mapped.model ?? norm(row.productName ?? row["품명"]), mapped.optionId ?? norm(row.option), Number(quantity)])).digest("hex");
   return { lineNo, vendor, orderId, quantity: Number(quantity), expectedPrice: row.expectedPrice ?? "", recipient, sourceKey, mapping: mapped,
-    status: reason ? "HOLD" : "READY", reason };
+    status: reason ? "HOLD" : "READY", reason, reviewNotes: mapped.reviewNotes ?? [] };
 }
 
 export function planOrders(job) {
@@ -93,8 +102,12 @@ export function planOrders(job) {
     if (lines.get(row.lineNo) > 1) { row.status = "HOLD"; row.reason = "같은 원본 행 번호가 중복되어 있습니다."; }
   }
   const heldDestinations = new Set(rows.filter(row => row.status !== "READY").map(destinationKey));
+  const destinationNotes = key => [...new Set(rows.filter(row => destinationKey(row) === key).flatMap(row => row.reviewNotes))];
   for (const row of rows) {
+    const notes = destinationNotes(destinationKey(row));
     if (row.status === "READY" && heldDestinations.has(destinationKey(row))) { row.status = "HOLD"; row.reason = "같은 배송지 주문에 보류된 상품 행이 있어 전체 주문을 보류합니다."; }
+    row.reviewNotes = notes;
+    if (row.status === "HOLD") row.reason = [row.reason, ...notes.filter(note => !row.reason.includes(note))].filter(Boolean).join("; ");
     if (row.status !== "READY") continue;
     const key = destinationKey(row);
     if (!groups.has(key)) groups.set(key, { vendor: row.vendor, addressMode: row.vendor === "eroum" ? "new" : "shippingNew", rows: [] });

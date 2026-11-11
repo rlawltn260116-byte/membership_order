@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { planOrders, mapProduct, splitDestination, submissionProblem, submitOnePrepared, publicLedgerRowKey, ledgerReservation } from "./b2b-orders.mjs";
+import { catalog, planOrders, mapProduct, splitDestination, submissionProblem, submitOnePrepared, publicLedgerRowKey, ledgerReservation } from "./b2b-orders.mjs";
 import { prepareHttpJob, runQueueVendor } from "./b2b-queue.mjs";
 import { submissionContent } from "./order-approval.mjs";
 
@@ -88,13 +88,83 @@ test("보필은 밑줄·괄호 밖 마지막 쉼표·보수적인 끝 이름을 
   assert.equal(splitDestination("모의로 1, 모의인", "eroum"), null);
 });
 
-test("보필의 확인한 색상 별칭·수량 구간은 연결하며 미확인 색상·부품·오기는 HOLD다", () => {
+test("보필의 확인한 색상 별칭·수량 구간은 연결하며 미확인 색상은 HOLD다", () => {
   for (const [productName, quantity, optionId] of [["성인용보행기 동행(sk-130) / 그린체크", 1, "4699"],
     ["성인용보행기 장수(sk-120)", 6, "3843"], ["목욕의자 BOFEEL11 / 블루", 3, "4678"],
     ["목욕의자 BFSC-112", 5, "6624"], ["BFMB20 브라운", 1, "6347"], ["동행(sk-130)/체크그린", 1, "4699"]]) {
     assert.equal(mapProduct("bofeel", { productName, quantity }).optionId, optionId);
   }
-  for (const productName of ["동행 SK-130", "BFMB20", "SK-103 / 꽃무늬", "BFMB5 부품 (변기통)", "BFMB20 / 초록"]) assert.equal(mapProduct("bofeel", { productName, quantity: 1 }).status, "HOLD");
+  for (const productName of ["동행 SK-130", "BFMB20", "BFMB20 / 초록"]) assert.equal(mapProduct("bofeel", { productName, quantity: 1 }).status, "HOLD");
+});
+
+test("선택 옵션 미기재는 기본값 없이 사람 검수로 보류하고 수량 구간만 자동 계산한다", () => {
+  for (const [vendor, productName] of [["bofeel", "BFMB20"], ["bofeel", "동행 SK-130"], ["bofeel", "BOFEEL11"], ["eroum", "DA-006"]]) {
+    const mapped = mapProduct(vendor, { productName, quantity: 1 });
+    assert.equal(mapped.status, "HOLD");
+    assert.equal(mapped.reason, "색상 미기재: 사람 검수 필요");
+    assert.equal(mapped.optionId, undefined);
+    assert.deepEqual(mapped.reviewNotes, [mapped.reason]);
+  }
+  const item = { model: "합성상품", names: ["합성상품"], goodsNo: "mock", options: [{name: "대형", optionSno: "mock"}] };
+  catalog.bofeel.push(item);
+  try { assert.equal(mapProduct("bofeel", { productName: "합성상품", quantity: 1 }).reason, "옵션 미기재: 사람 검수 필요"); }
+  finally { catalog.bofeel.pop(); }
+  assert.equal(mapProduct("bofeel", { productName: "장수(sk-120)", quantity: 3 }).optionId, "3843");
+  assert.equal(mapProduct("bofeel", { productName: "BFSC-112", quantity: 1 }).optionId, "6622");
+});
+
+test("색상 누락은 우편번호 사유와 함께 준비 결과에 남고 같은 주문 전체를 보류한다", async () => {
+  const source = job([row({ sourceSystem: "보필", productName: "BFMB20", zipcode: "", memo: "문 앞" }),
+    row({ sourceSystem: "보필", productName: "BFSH10", zipcode: "", lineNo: 2, memo: "문 앞" })]);
+  const plan = planOrders(source);
+  assert.equal(plan.groups.length, 0);
+  assert.match(plan.rows[0].reason, /우편번호.*색상 미기재: 사람 검수 필요/);
+  const prepared = await prepareHttpJob(source, { runVendor: async () => { throw Error("사이트 요청 금지"); } });
+  assert.equal(prepared.canSubmit, false);
+  assert.equal(prepared.details.length, 2);
+  for (const detail of prepared.details) {
+    assert.equal(detail.status, "HOLD");
+    assert.match(detail.reason, /색상 미기재: 사람 검수 필요/);
+    assert.deepEqual(detail.reviewNotes, ["색상 미기재: 사람 검수 필요"]);
+  }
+  assert(plan.rows.every(r => r.recipient.memo === "문 앞"));
+  const sameOrder = planOrders({ ...source, rows: source.rows.map(r => ({...r, zipcode: "04524"})) });
+  assert(sameOrder.rows.every(r => r.status === "HOLD"));
+  assert.equal(sameOrder.groups.length, 0);
+});
+
+test("사용자가 확인한 SK-103 오기는 동행 SK-130의 유일한 꽃무늬 구간에만 연결한다", () => {
+  for (const productName of ["SK-103 / 꽃무늬", "동행 SK-103(꽃무늬)", "성인용보행기 SK-103 / 꽃무늬"]) {
+    for (const [quantity, optionId] of [[1, "4697"], [3, "4698"]]) {
+      const mapped = mapProduct("bofeel", { productName, quantity });
+      assert.equal(mapped.model, "동행(sk-130)");
+      assert.equal(mapped.productId, "1000000605");
+      assert.equal(mapped.optionId, optionId);
+    }
+  }
+  for (const changes of [{quantity: 0}, {quantity: undefined}, {option: "블루"}])
+    assert.equal(mapProduct("bofeel", { productName: "SK-103 / 꽃무늬", quantity: 1, ...changes }).status, "HOLD");
+  const item = catalog.bofeel.find(i => i.model === "동행(sk-130)");
+  item.options.push({name: "꽃무늬 / 1개 ~ 2개", optionSno: "모호함"});
+  try { assert.equal(mapProduct("bofeel", {productName: "SK-103 / 꽃무늬", quantity: 1}).status, "HOLD"); }
+  finally { item.options.pop(); }
+});
+
+test("버켓은 정확한 상품 후보로 구분하되 옵션 미확인 상태에서 완제품으로 주문하지 않는다", async () => {
+  for (const productName of ["BFMB5 변기통", "BFMB5 버켓", "BFMB5 부품 (변기통)", "이동변기부품 BFMB5 버켓", "보필 이동변기 버켓 (버켓, 손잡이, 뚜껑)"]) {
+    const mapped = mapProduct("bofeel", { productName, quantity: 1 });
+    assert.equal(mapped.status, "HOLD");
+    assert.equal(mapped.productId, "1000000385");
+    assert.equal(mapped.optionId, undefined);
+    assert.equal(mapped.reason, "부품 기본 옵션 식별자 미확인: 사람 검수 필요");
+  }
+  assert.equal(mapProduct("bofeel", { productName: "BFMB5", quantity: 1 }).optionId, "6350");
+  for (const productName of ["BFMB5 손잡이", "BFMB5 부품", "BFMB50 변기통", "다른모델 버켓"])
+    assert.equal(mapProduct("bofeel", { productName, quantity: 1 }).status, "HOLD");
+  const prepared = await prepareHttpJob(job([row({ sourceSystem: "보필", productName: "BFMB5 변기통" })]),
+    { runVendor: async () => { throw Error("미확인 부품 사이트 요청 금지"); } });
+  assert.equal(prepared.canSubmit, false);
+  assert.deepEqual(prepared.details[0].reviewNotes, ["부품 기본 옵션 식별자 미확인: 사람 검수 필요"]);
 });
 
 test("두 업체 모두 공란·THK 원주문번호를 허용하고 수정본 파일의 같은 행 키와 원장은 유지된다", async () => {

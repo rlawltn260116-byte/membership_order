@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from bofeel_products import product_fields
 from http_cart import CartRow, CartSnapshot, Document, build_order_draft, one, replace, values, parse_cart
 from http_login_draft import LoginError, StopSignalError
-from http_queue import prepare_bofeel_group, cleanup_bofeel, run
+from http_queue import CATALOG, check_mapping, prepare_bofeel_group, cleanup_bofeel, run
 from http_amounts import verify_bofeel
 from test_http_amounts import bofeel_case
 from test_http_queue import row, group, FakeBofeel
@@ -56,6 +56,22 @@ class MultiSession(FakeBofeel):
 
 
 class BofeelHoldsTests(unittest.TestCase):
+    def test_unverified_bucket_mapping_is_rejected_before_any_cart_request(self):
+        candidate = next(i for i in CATALOG['bofeel'] if i['goodsNo'] == '1000000385')
+        self.assertEqual(candidate['options'], [])
+        self.assertIn('사람 검수 필요', candidate['holdReason'])
+        value = row('bofeel')
+        value['mapping'] = dict(productId=candidate['goodsNo'], model=candidate['model'], optionName='', optionId='추측금지')
+        session = Mock()
+        with self.assertRaises(LoginError):
+            prepare_bofeel_group(session, group('bofeel', [value]))
+        session.get_cart.assert_not_called()
+        session._operation.assert_not_called()
+        # 후보에 식별자가 잘못 들어와도 명시한 HOLD가 우선한다.
+        with patch.dict(candidate, options=[dict(name='', optionSno='추측금지')]):
+            with self.assertRaises(LoginError):
+                check_mapping('bofeel', value)
+
     def test_cart_option_quantity_tier_ignores_only_price_annotation_and_known_model_notice(self):
         source='''<form id="frmCart"><table><tr><td><input name="cartSno[]" value="mock-row"
           data-goods-no="1000000605" data-goods-nm="동행(sk-130) [ 입고 예정 안내)"
