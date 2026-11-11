@@ -9,10 +9,104 @@ from email.message import Message
 import unittest
 from unittest.mock import patch
 from http_login_draft import (LoginError, VendorHttpSession, encrypt_bofeel,
-                             LoginForm, NoRedirect, response_kind)
+                             LoginForm, NoRedirect, response_kind, LoginRejectedError,
+                             LoginVerificationError, LoginProtocolError, LoginTransportError,
+                             StopSignalError, login_response_summary)
 
 
 class LoginTests(unittest.TestCase):
+    def bofeel_form(self):
+        return '<form id="formLogin">' + ''.join(
+            f'<input name="{key}" value="{value}">' for key, value in
+            [('mode', 'login'), ('returnUrl', '/'), ('secretKey', 'mock'), ('encryptFl', 'Y')]) + '</form>'
+
+    def test_failure_stage_and_response_types_never_contain_server_values(self):
+        session = VendorHttpSession('bofeel')
+        body = json.dumps({'code': 'private-code', 'message': 'private-server-message'})
+        with patch.object(session, 'request', side_effect=[self.bofeel_form(), body]) as request:
+            with self.assertRaises(LoginRejectedError):
+                session.login('mock', 'mock')
+            self.assertEqual(request.call_count, 2)
+        self.assertEqual(session.diagnostics, [dict(code_type='string', message_type='string'),
+                         dict(login_stage='authentication_response', error_kind='server_rejected')])
+        self.assertNotIn('private-', json.dumps(session.diagnostics))
+
+    def test_ambiguous_post_and_verification_failure_are_not_server_rejection(self):
+        for verification in ['로그인', LoginError('허용 범위 밖 리다이렉트 중단'), LoginTransportError('조회 실패')]:
+            session = VendorHttpSession('bofeel')
+            with patch.object(session, 'request', side_effect=[self.bofeel_form(), '<script>location.href="/"</script>', verification]) as request:
+                with self.assertRaises(LoginVerificationError):
+                    session.login('mock', 'mock')
+                self.assertEqual(request.call_count, 3)
+                with self.assertRaisesRegex(LoginError, '자동 재시도 금지'):
+                    session.login('mock', 'mock')
+                self.assertEqual(request.call_count, 3)
+            self.assertEqual(session.diagnostics[-1], dict(login_stage='session_verification', error_kind='verification_failed'))
+
+    def test_verification_stop_signal_is_preserved_without_followup(self):
+        session = VendorHttpSession('bofeel')
+        with patch.object(session, 'request', side_effect=[self.bofeel_form(), '{}', StopSignalError('중단')]) as request:
+            with self.assertRaises(StopSignalError):
+                session.login('mock', 'mock')
+            self.assertEqual(request.call_count, 3)
+        self.assertEqual(session.diagnostics[-1]['error_kind'], 'stop_signal')
+
+    def test_malformed_json_is_protocol_error_not_denial(self):
+        for body in ['{', '[]']:
+            session = VendorHttpSession('bofeel')
+            with patch.object(session, 'request', side_effect=[self.bofeel_form(), body]) as request:
+                with self.assertRaises(LoginProtocolError):
+                    session.login('mock', 'mock')
+                self.assertEqual(request.call_count, 2)
+
+    def test_response_summary_records_only_types(self):
+        for value, kind in [(None, 'null'), (False, 'boolean'), (0, 'number'), ('mock', 'string'), ([], 'array'), ({}, 'object')]:
+            self.assertEqual(login_response_summary({'code': value}), dict(code_type=kind, message_type='absent'))
+
+    def test_http_and_connection_failures_are_transport_errors_without_retry(self):
+        for failure in [urllib.error.URLError('private-network-detail'), TimeoutError('private-network-detail')]:
+            session = VendorHttpSession('bofeel')
+            with patch.object(session.opener, 'open', side_effect=failure) as request:
+                with self.assertRaises(LoginTransportError):
+                    session.login('mock', 'mock')
+                self.assertEqual(request.call_count, 1)
+            self.assertEqual(session.diagnostics[-1], dict(login_stage='login_form', error_kind='transport_failed'))
+            self.assertNotIn('private-', json.dumps(session.diagnostics))
+        session = VendorHttpSession('bofeel')
+        response = io.BytesIO(b'private-server-detail')
+        response.code = 503
+        response.headers = Message()
+        with patch.object(session.opener, 'open', return_value=response) as request:
+            with self.assertRaises(LoginTransportError):
+                session.login('mock', 'mock')
+            self.assertEqual(request.call_count, 1)
+        self.assertEqual(session.trace[-1]['status'], 503)
+
+    def test_catalog_override_can_fail_confirmation_after_successful_post(self):
+        # 이전 로컬 경로 재현: 상품 페이지에 인증 확인용 문구가 없을 수 있다.
+        class CatalogOverride(VendorHttpSession):
+            def request(self, path, fields=None):
+                if path == self.cart_path:
+                    return '<form id="frmView">mock-authenticated-product</form>'
+                return super().request(path, fields)
+        original = VendorHttpSession.request
+        with patch.object(VendorHttpSession, 'request', side_effect=[self.bofeel_form(), '{}']):
+            session = CatalogOverride('bofeel')
+            with self.assertRaises(LoginVerificationError):
+                session.login('mock', 'mock')
+        self.assertIs(VendorHttpSession.request, original)
+        session = VendorHttpSession('bofeel')
+        with patch.object(session, 'request', side_effect=[self.bofeel_form(), '{}', '로그아웃']):
+            self.assertTrue(session.login('mock', 'mock')['authenticated'])
+
+    def test_special_characters_survive_encryption_and_form_encoding(self):
+        session = VendorHttpSession('bofeel')
+        with patch.object(session, 'request', side_effect=[self.bofeel_form(), '{}', '로그아웃']) as request, patch('http_login_draft.encrypt_bofeel', side_effect=['fake+encoded/id=', 'fake+encoded/pwd=']) as encrypt:
+            session.login('mock+user', 'mock!@#$%^&*()+/=한글')
+            self.assertEqual(encrypt.call_args_list[1].args[0], 'mock!@#$%^&*()+/=한글')
+            fields = request.call_args_list[1].args[1]
+            self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlencode(fields))['loginPwd'], ['fake+encoded/pwd='])
+
     def test_encryption_against_node_crypto(self):
         # 고정된 가짜 입력만 Node의 독립 AES/PBKDF2 구현과 대조한다.
         script = """

@@ -150,21 +150,28 @@ test("사용자가 확인한 SK-103 오기는 동행 SK-130의 유일한 꽃무�
   finally { item.options.pop(); }
 });
 
-test("버켓은 정확한 상품 후보로 구분하되 옵션 미확인 상태에서 완제품으로 주문하지 않는다", async () => {
+test("버켓은 확인된 기본 옵션으로 READY가 되고 완제품과 다른 부품은 구분한다", async () => {
   for (const productName of ["BFMB5 변기통", "BFMB5 버켓", "BFMB5 부품 (변기통)", "이동변기부품 BFMB5 버켓", "보필 이동변기 버켓 (버켓, 손잡이, 뚜껑)"]) {
     const mapped = mapProduct("bofeel", { productName, quantity: 1 });
-    assert.equal(mapped.status, "HOLD");
+    assert.equal(mapped.status, "READY");
     assert.equal(mapped.productId, "1000000385");
-    assert.equal(mapped.optionId, undefined);
-    assert.equal(mapped.reason, "부품 기본 옵션 식별자 미확인: 사람 검수 필요");
+    assert.equal(mapped.optionId, "1603");
+    assert.equal(mapped.optionName, "");
   }
   assert.equal(mapProduct("bofeel", { productName: "BFMB5", quantity: 1 }).optionId, "6350");
   for (const productName of ["BFMB5 손잡이", "BFMB5 부품", "BFMB50 변기통", "다른모델 버켓"])
     assert.equal(mapProduct("bofeel", { productName, quantity: 1 }).status, "HOLD");
-  const prepared = await prepareHttpJob(job([row({ sourceSystem: "보필", productName: "BFMB5 변기통" })]),
-    { runVendor: async () => { throw Error("미확인 부품 사이트 요청 금지"); } });
-  assert.equal(prepared.canSubmit, false);
-  assert.deepEqual(prepared.details[0].reviewNotes, ["부품 기본 옵션 식별자 미확인: 사람 검수 필요"]);
+  const plan = planOrders(job([row({ sourceSystem: "보필", productName: "BFMB5 변기통" })]));
+  assert.equal(plan.rows[0].status, "READY");
+  assert.equal(plan.rows[0].mapping.productId, "1000000385");
+  assert.equal(plan.rows[0].mapping.optionId, "1603");
+  assert.equal(plan.groups[0].addressMode, "shippingNew");
+  assert.equal(planOrders(job([row({ sourceSystem: "보필", productName: "BFMB5 변기통", zipcode: "" })])).rows[0].status, "HOLD");
+  const item = catalog.bofeel.find(i => i.goodsNo === "1000000385");
+  item.holdReason = "사람 검수 필요";
+  try {
+    assert.equal(mapProduct("bofeel", {productName: "BFMB5 변기통", quantity: 1}).status, "HOLD");
+  } finally { delete item.holdReason; }
 });
 
 test("두 업체 모두 공란·THK 원주문번호를 허용하고 수정본 파일의 같은 행 키와 원장은 유지된다", async () => {

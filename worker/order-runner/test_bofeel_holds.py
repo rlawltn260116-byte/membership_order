@@ -56,10 +56,26 @@ class MultiSession(FakeBofeel):
 
 
 class BofeelHoldsTests(unittest.TestCase):
+    def test_verified_bucket_mapping_and_current_form_match_without_requests(self):
+        candidate = next(i for i in CATALOG['bofeel'] if i['goodsNo'] == '1000000385')
+        self.assertEqual(candidate['options'], [dict(name='', optionSno='1603')])
+        self.assertNotIn('holdReason', candidate)
+        value = row('bofeel')
+        value['mapping'] = dict(productId=candidate['goodsNo'], model=candidate['model'], optionName='', optionId='1603')
+        check_mapping('bofeel', value)
+        source = '<form id="frmView"><input name="optionFl" value="n"><input name="goodsNo[]" value="1000000385"><input name="optionSno[]" value="1603"><input name="goodsCnt[]" value="1"></form>'
+        session = Mock()
+        fields = product_fields(session, source, value['mapping'], 2)
+        self.assertEqual(values(fields, 'goodsNo[]'), ['1000000385'])
+        self.assertEqual(values(fields, 'optionSno[]'), ['1603'])
+        self.assertEqual(values(fields, 'goodsCnt[]'), ['2'])
+        self.assertEqual(session.mock_calls, [])
+        for changed in [source.replace('1603', '9999'), source.replace('1000000385', '1000000675')]:
+            with self.assertRaises(LoginError):
+                product_fields(session, changed, value['mapping'], 1)
+
     def test_unverified_bucket_mapping_is_rejected_before_any_cart_request(self):
         candidate = next(i for i in CATALOG['bofeel'] if i['goodsNo'] == '1000000385')
-        self.assertEqual(candidate['options'], [])
-        self.assertIn('사람 검수 필요', candidate['holdReason'])
         value = row('bofeel')
         value['mapping'] = dict(productId=candidate['goodsNo'], model=candidate['model'], optionName='', optionId='추측금지')
         session = Mock()
@@ -67,8 +83,8 @@ class BofeelHoldsTests(unittest.TestCase):
             prepare_bofeel_group(session, group('bofeel', [value]))
         session.get_cart.assert_not_called()
         session._operation.assert_not_called()
-        # 후보에 식별자가 잘못 들어와도 명시한 HOLD가 우선한다.
-        with patch.dict(candidate, options=[dict(name='', optionSno='추측금지')]):
+        # 명시한 HOLD가 생기면 일치하는 식별자보다 우선한다.
+        with patch.dict(candidate, holdReason='사람 검수 필요', options=[dict(name='', optionSno='추측금지')]):
             with self.assertRaises(LoginError):
                 check_mapping('bofeel', value)
 

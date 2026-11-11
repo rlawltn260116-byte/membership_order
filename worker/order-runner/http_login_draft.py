@@ -19,11 +19,48 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
 class LoginError(Exception):
-    pass
+    kind = 'login_error'
+
+
+class LoginRejectedError(LoginError):
+    """서버 로그인 실패 분기. 계정·비밀번호 오류라고 단정하지 않는다."""
+    kind = 'server_rejected'
+
+
+class LoginVerificationError(LoginError):
+    """인증 POST 뒤 성공 증거를 확인하지 못함. 인증 거부와 구분한다."""
+    kind = 'verification_failed'
+
+
+class LoginProtocolError(LoginError):
+    kind = 'protocol_changed'
+
+
+class LoginTransportError(LoginError):
+    kind = 'transport_failed'
 
 
 class StopSignalError(LoginError):
     """추가 요청 없이 즉시 멈춰야 하는 사이트 신호."""
+    kind = 'stop_signal'
+
+
+def login_response_summary(data):
+    """서버 값은 버리고 code·message의 존재와 자료형만 남긴다."""
+    def field_type(key):
+        if not isinstance(data, dict) or key not in data:
+            return 'absent'
+        value = data[key]
+        if value is None:
+            return 'null'
+        if isinstance(value, bool):
+            return 'boolean'
+        if isinstance(value, str):
+            return 'string'
+        if isinstance(value, (int, float)):
+            return 'number'
+        return 'array' if isinstance(value, list) else 'object'
+    return {key + '_type': field_type(key) for key in ('code', 'message')}
 
 
 class LoginForm(HTMLParser):
@@ -104,6 +141,7 @@ class VendorHttpSession:
         self.attempted = False
         self.trace = []
         self.diagnostics = []
+        self.login_stage = 'not_started'
 
     def request(self, path, fields=None):
         # 로그인 페이지와 장바구니만 조회한다. POST 뒤 홈 이동은 실행하지 않는다.
@@ -134,6 +172,8 @@ class VendorHttpSession:
                 response = self.opener.open(req, timeout=30)
             except urllib.error.HTTPError as exc:
                 response = exc
+            except (urllib.error.URLError, TimeoutError, OSError):
+                raise LoginTransportError('로그인 연결 실패: 재시도 없이 중단') from None
             with response:
                 status = response.code
                 self.trace.append({'method': method, 'path': parts.path, 'status': status})
@@ -155,7 +195,7 @@ class VendorHttpSession:
                         raise LoginError('추가 조회 리다이렉트 중단')
                     return ''
                 if status != 200:
-                    raise LoginError('비정상 HTTP 응답으로 중단')
+                    raise LoginTransportError('비정상 HTTP 응답으로 중단')
                 raw = response.read()
                 if response.headers.get('Content-Encoding', '').lower() == 'gzip':
                     raw = gzip.decompress(raw)
@@ -173,37 +213,61 @@ class VendorHttpSession:
         if self.attempted:
             raise LoginError('자동 재시도 금지')
         self.attempted = True
+        try:
+            return self._login_once(username, password)
+        except LoginError as error:
+            self.diagnostics.append({'login_stage': self.login_stage, 'error_kind': error.kind})
+            raise
+
+    def _login_once(self, username, password):
+        self.login_stage = 'login_form'
         html = self.request(self.login_path)
         form = LoginForm('flogin' if self.vendor == 'eroum' else 'formLogin')
         form.feed(html)
         if self.vendor == 'eroum':
             if not {'mb_id', 'mb_password', 'url'} <= form.fields.keys():
-                raise LoginError('로그인 폼 변경')
+                raise LoginProtocolError('로그인 폼 변경')
+            self.login_stage = 'authentication_post'
             result = self.request(self.post_path, dict(mb_id=username, mb_password=password, url='/'))
             outcome = {'login_response_kind': response_kind(result)}
         else:
             if not {'mode', 'returnUrl', 'secretKey', 'encryptFl'} <= form.fields.keys():
-                raise LoginError('로그인 폼 변경')
+                raise LoginProtocolError('로그인 폼 변경')
             if not form.fields['secretKey'] or form.fields['encryptFl'] != 'Y':
-                raise LoginError('암호화 설정 변경')
+                raise LoginProtocolError('암호화 설정 변경')
             fields = dict(form.fields)
             fields['loginId'] = encrypt_bofeel(username, fields['secretKey'])
             fields['loginPwd'] = encrypt_bofeel(password, fields['secretKey'])
+            self.login_stage = 'authentication_post'
             result = self.request(self.post_path, fields)
+            self.login_stage = 'authentication_response'
             kind = response_kind(result)
             # $.post에는 dataType 지정이 없다. HTML은 성공도 실패도 확정하지 않는다.
             if kind == 'json':
                 try:
                     data = json.loads(result.lstrip('\ufeff \r\n\t'))
                 except ValueError:
-                    raise LoginError('로그인 JSON 응답 형식 미확인') from None
+                    raise LoginProtocolError('로그인 JSON 응답 형식 미확인') from None
                 check_stop_signal(json.dumps(data, ensure_ascii=False))
-                if not isinstance(data, dict) or 'code' in data or 'message' in data:
-                    raise LoginError('로그인 JSON 실패 분기')
+                self.diagnostics.append(login_response_summary(data))
+                if not isinstance(data, dict):
+                    raise LoginProtocolError('로그인 JSON 객체 형식 미확인')
+                # 저장된 사이트 콜백과 동일: 두 키가 모두 undefined일 때만 성공 후보다.
+                if 'code' in data or 'message' in data:
+                    raise LoginRejectedError('서버 로그인 실패 분기: 자격증명 오류 여부는 미확정')
+            else:
+                self.diagnostics.append({'code_type': 'unavailable', 'message_type': 'unavailable'})
             outcome = {'login_response_kind': kind}
-        cart = self.request(self.cart_path)
+        self.login_stage = 'session_verification'
+        try:
+            cart = self.request(self.cart_path)
+        except StopSignalError:
+            raise
+        except LoginError:
+            raise LoginVerificationError('장바구니 인증 확인 요청 실패: 인증 거부 여부 미확정') from None
         if '로그아웃' not in cart:
-            raise LoginError('장바구니 로그인 상태 미확인')
+            raise LoginVerificationError('장바구니 로그인 상태 미확인: 인증 거부 여부 미확정')
+        self.login_stage = 'authenticated'
         return dict(outcome, cart_logout=True, authenticated=True)
 
     def clear(self):

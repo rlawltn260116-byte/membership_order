@@ -94,8 +94,12 @@
         "이동변기부품 BFMB5 버켓"
       ],
       "goodsNo": "1000000385",
-      "holdReason": "부품 기본 옵션 식별자 미확인: 사람 검수 필요",
-      "options": []
+      "options": [
+        {
+          "name": "",
+          "optionSno": "1603"
+        }
+      ]
     },
     {
       "model": "동행(sk-130)",
