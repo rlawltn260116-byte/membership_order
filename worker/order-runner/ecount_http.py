@@ -42,6 +42,12 @@ MYEONGSEONG_DELIVERY_FIELDS = {
     'recipient': 'remarks', 'phone': 'p_remarks1', 'address': 'p_remarks2',
     'memo': 'ADD_TXT_01',
 }
+# 세비앙: 기존 주문서 20건의 상단 필드 형태(P_DES4 전화 20/20, P_DES5 주소 19/20, P_DES6 장문,
+# P_DES3 값 14종)에서 추정한 매핑이다. 화면 라벨은 확인하지 못했으므로 추정 상태다.
+SEBIAN_DELIVERY_FIELDS = {
+    'recipient': 'P_DES3', 'phone': 'P_DES4', 'address': 'P_DES5', 'memo': 'P_DES6',
+}
+HEADER_DELIVERY_MAPPINGS = (SEBIAN_DELIVERY_FIELDS,)
 
 
 class EcountError(Exception):
@@ -292,7 +298,7 @@ def create_order_draft(screen_data, product, quantity, *, order_date, due_date,
     배송 필드는 업체별 양식을 확인한 호출자가 명시해야 한다. 금액과 전체 저장
     본문은 미검증이므로 반환 객체를 전송 가능한 요청으로 취급하지 않는다.
     """
-    if delivery_fields != MYEONGSEONG_DELIVERY_FIELDS:
+    if delivery_fields != MYEONGSEONG_DELIVERY_FIELDS and delivery_fields not in HEADER_DELIVERY_MAPPINGS:
         raise EcountError('검증된 업체별 배송 필드 매핑 필요')
     for value in (order_date, due_date):
         try:
@@ -321,6 +327,7 @@ def create_order_draft(screen_data, product, quantity, *, order_date, due_date,
         'dates': {'REQ_DATE': order_date, 'TIME_DATE': due_date},
         'line': {'PROD_CD': product['PROD_CD'], 'PROD_DES': product.get('PROD_DES', ''),
                  'SIZE_DES': product.get('SIZE_DES', ''), 'QTY': str(qty)},
+        'delivery_target': 'master' if delivery_fields in HEADER_DELIVERY_MAPPINGS else 'detail',
         'delivery': {delivery_fields[k]: v for k, v in {
             'recipient': recipient, 'phone': phone, 'address': address, 'memo': memo,
         }.items()},
@@ -348,20 +355,45 @@ def draft_save_projection(draft):
     if draft.get('kind') != 'ecount_review_draft' or draft.get('submission_ready') is not False:
         raise EcountError('검토용 초안 필요')
     detail = copy.deepcopy(draft['line'])
+    master = copy.deepcopy(draft['dates'])
     add_text = {}
     for field, value in draft.get('delivery', {}).items():
-        if field.startswith('ADD_TXT_'):
+        if draft.get('delivery_target') == 'master':
+            master[field] = value
+        elif field.startswith('ADD_TXT_'):
             add_text[field] = value
         else:
             detail[field.upper()] = value
     detail['Key'] = {'SER_NO': '1'}
     dto = serialize_add_text_dto(draft['dates']['REQ_DATE'], detail_text=[('1', add_text)])
     return {
-        'Master': copy.deepcopy(draft['dates']), 'Details': [detail], 'AddDto': dto,
+        'Master': master, 'Details': [detail], 'AddDto': dto,
         'complete': False,
         'hold_reasons': ['전체 Request·Master·Details 미구현', '금액·세금·업체별 정책 미검증'] +
                         ([] if 'delivery' in draft else ['배송 필드 미배치']),
     }
+
+
+def compute_line_amounts(product, quantity, decimals=0):
+    """조회된 단가·세금 필드로 한 행의 금액을 오프라인 계산한다. 서버 검증이 아니다.
+
+    부가세 별도·포함 단가가 같은 세율로 서로 맞는지 확인하고, 어긋나면 중단한다.
+    """
+    try:
+        qty, rate = Decimal(str(quantity)), Decimal(str(product['VAT_RATE_BY'])) / 100
+        price, gross = Decimal(str(product['PRICE'])), Decimal(str(product['PRICE_VAT_INCLUDE']))
+        if product['VAT_YN'] not in ('Y', 'N') or qty <= 0 or not 0 <= rate < 1 or price < 0:
+            raise ValueError()
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        raise EcountError('금액 계산 필드 누락') from None
+    unit = Decimal(1).scaleb(-decimals)
+    expected_gross = (price * (1 + rate)).quantize(unit)
+    if product['VAT_YN'] == 'N' and abs(expected_gross - gross) > unit:
+        raise EcountError('단가와 부가세 포함 단가 불일치')
+    supply = (price * qty).quantize(unit)
+    vat = (supply * rate).quantize(unit)
+    return {'supply_amt': supply, 'vat_amt': vat, 'total': supply + vat,
+            'server_verified': False}
 
 
 def review_product_policy(screen_data, product, quantity):

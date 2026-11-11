@@ -388,6 +388,29 @@ class EcountReadAndDraftTest(unittest.TestCase):
         self.assertTrue(E.review_product_policy(config, product, 2)['minimum_satisfied'])
         self.assertIsNone(E.review_product_policy({}, product, 1)['minimum_satisfied'])
 
+    def test_sebian_header_mapping_goes_to_master_and_stays_unsubmittable(self):
+        args = dict(order_date='20261111', due_date='20261112', recipient='모의수취인',
+                    phone='모의연락처', address='모의신규주소', memo='모의비고만')
+        draft = E.create_order_draft(SCREEN_DATA, {'PROD_CD': '모의품목'}, 1,
+                                     delivery_fields=E.SEBIAN_DELIVERY_FIELDS, **args)
+        self.assertFalse(draft['submission_ready'])
+        projection = E.draft_save_projection(draft)
+        self.assertEqual(projection['Master']['P_DES5'], '모의신규주소')
+        self.assertEqual(projection['Master']['P_DES6'], '모의비고만')
+        self.assertNotIn('P_DES4', projection['Details'][0])
+        self.assertEqual(projection['AddDto']['AddTxt'], [])
+        self.assertFalse(projection['complete'])
+
+    def test_line_amounts_are_computed_offline_and_mismatch_stops(self):
+        product = dict(PRICE='1000', PRICE_VAT_INCLUDE='1100', VAT_YN='N', VAT_RATE_BY='10.000')
+        result = E.compute_line_amounts(product, 3)
+        self.assertEqual((result['supply_amt'], result['vat_amt'], result['total']), (3000, 300, 3300))
+        self.assertFalse(result['server_verified'])
+        with self.assertRaises(E.EcountError):
+            E.compute_line_amounts(dict(product, PRICE_VAT_INCLUDE='1200'), 1)
+        with self.assertRaises(E.EcountError):
+            E.compute_line_amounts({'PRICE': '1'}, 1)
+
     def test_unverified_cache_and_temporary_save_routes_are_blocked(self):
         s = E.EcountSession()
         for path in ('/ECERP/SVC/Popup/GetXFormCache', '/ECAPI/SVC/TemporarySave/Save',
