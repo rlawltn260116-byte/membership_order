@@ -266,8 +266,10 @@ def parse_cart(vendor, html):
             # 이 모델의 사이트 상품명 뒤에는 입고 예정 안내가 붙는다. 모델 표기만 분리한다.
             name = re.sub(r'^(동행\(sk-130\))\s+\[.*$', r'\1', name)
             quantity = positive_int(a.get('data-default-goods-cnt', ''))
+            # 장바구니는 분리형 옵션을 '블루/1개 ~ 2개'처럼 공백 없는 '/'로 표시한다(2026-11-11 실제 확인).
+            # 연결표 표기 '블루 / 1개 ~ 2개'와 같게 구분자 앞뒤 공백을 정규화한다.
             option = ' / '.join(re.sub(r'\s*\(개당\s*:?.*$', '', part).strip()
-                                for part in normal(a.get('data-option-nm', '')).split(' / '))
+                                for part in re.split(r'\s*/\s*', normal(a.get('data-option-nm', ''))))
             cart_id = a.get('value', '')
             displays = [n.text() for n in tr.all('strong') if n.parent and n.parent.has_class('order_goods_num')]
             if displays != [str(quantity) + '개']:

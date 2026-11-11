@@ -95,6 +95,23 @@ class CartTests(unittest.TestCase):
         self.assertIn(('cartSno[]', 'mock-row'), deletion_fields(snapshot, row))
         with self.assertRaises(LoginError): parse_cart('bofeel', html.replace('1개', '2개'))
 
+    def test_bofeel_split_option_label_matches_catalog_notation(self):
+        # 실제 장바구니 표기: 공백 없는 '/'와 개당 가격 안내. 연결표는 ' / ' 구분자다.
+        html = '''<form id="frmCart"><table><tr><td><input name="cartSno[]" value="mock-a"
+        data-goods-no="1000000605" data-goods-nm="동행(sk-130)" data-option-nm="블루/1개 ~ 2개"
+        data-default-goods-cnt="1" type="checkbox"></td>
+        <td><div class="order_goods_num"><strong>1개</strong></div></td></tr>
+        <tr><td><input name="cartSno[]" value="mock-b"
+        data-goods-no="1000000576" data-goods-nm="BOFEEL11" data-option-nm="파스텔블루/3개 ~ 4개 (개당 : 1원)"
+        data-default-goods-cnt="3" type="checkbox"></td>
+        <td><div class="order_goods_num"><strong>3개</strong></div></td></tr></table></form>'''
+        snapshot = parse_cart('bofeel', html)
+        snapshot.require_items([('1000000605', '동행(sk-130)', '블루 / 1개 ~ 2개', 1),
+                                ('1000000576', 'BOFEEL11', '파스텔블루 / 3개 ~ 4개', 3)])
+        with self.assertRaises(LoginError):
+            snapshot.require_items([('1000000605', '동행(sk-130)', '꽃무늬 / 1개 ~ 2개', 1),
+                                    ('1000000576', 'BOFEEL11', '파스텔블루 / 3개 ~ 4개', 3)])
+
     def test_empty_requires_marker_and_form(self):
         parse_cart('eroum', eroum_cart('장바구니가 비어 있습니다.')).require_empty()
         with self.assertRaises(LoginError): parse_cart('eroum', eroum_cart('')).require_empty()
