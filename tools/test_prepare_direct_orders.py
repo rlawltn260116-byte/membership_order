@@ -139,6 +139,31 @@ class PreparationTests(unittest.TestCase):
             self.assertEqual(name, '발주')
             self.assertEqual(rows[1][0], 'TEST-1')
 
+    def test_hidden_sheets_are_excluded_and_wrong_selection_is_held(self):
+        from openpyxl import Workbook
+        with tempfile.TemporaryDirectory(dir=p.LOCAL) as tmp:
+            source = Path(tmp) / '모의 발주서.xlsx'
+            book = Workbook()
+            book.active.title = '숨김'
+            book.active.sheet_state = 'hidden'
+            book.create_sheet('매우숨김').sheet_state = 'veryHidden'
+            visible = book.create_sheet('발주')
+            visible.append(self.header)
+            visible.append(self.row)
+            book.save(source)
+            rows, selected = p.read_workbook(source, None)
+            self.assertEqual(selected, '발주')
+            self.assertEqual(rows[1][0], 'TEST-1')
+            for selected in ('숨김', '매우숨김', '없는시트'):
+                with self.subTest(selected=selected), self.assertRaises(ValueError):
+                    p.read_workbook(source, selected)
+            book.create_sheet('추가본').append(self.header)
+            book.save(source)
+            with self.assertRaises(ValueError):
+                p.read_workbook(source, None)
+            self.assertEqual(p.read_workbook(source, '추가본')[1], '추가본')
+            book.close()
+
 
 if __name__ == '__main__':
     p.LOCAL.mkdir(exist_ok=True)

@@ -1,5 +1,6 @@
 // 로컬 분석 전용. 큐, 네트워크, 처리 이력 쓰기를 수행하지 않는다.
 import ExcelJS from 'exceljs';
+import { selectWorksheet } from '../worker/order-runner/workbook-policy.mjs';
 
 const text = value => String(value ?? '').trim();
 const normalize = value => text(value).replace(/\s+/g, '');
@@ -13,10 +14,9 @@ export function recentOrderPeriod(asOf) {
   return { start: start.toISOString().slice(0, 10), end: asOf };
 }
 
-export async function readAmaranthWorkbook(path) {
+export async function readAmaranthWorkbook(path, selectedSheet) {
   const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(path);
-  const sheet = wb.worksheets[0];
-  if (!sheet) throw new Error('첫 시트가 없습니다.');
+  const sheet = selectWorksheet(wb, selectedSheet);
   const headers = sheet.getRow(1).values.slice(1).map(text);
   if (required.some(h => !headers.includes(h)) || new Set(headers).size !== headers.length) throw new Error('필수 열 누락 또는 중복 열이 있습니다.');
   const rows = [];

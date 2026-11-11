@@ -117,10 +117,13 @@ def read_workbook(path, sheet):
     import openpyxl
     book = openpyxl.load_workbook(path, read_only=False, data_only=False, keep_links=False)
     try:
+        visible = [ws.title for ws in book.worksheets if ws.sheet_state == 'visible']
+        if not visible:
+            raise ValueError('보이는 시트가 없음')
         if sheet is None:
-            if len(book.sheetnames) != 1:
+            if len(visible) != 1:
                 raise ValueError('여러 시트: --sheet로 처리할 시트를 명시하세요')
-            sheet = book.sheetnames[0]
+            sheet = visible[0]
         if sheet not in book.sheetnames:
             raise ValueError('지정한 시트가 없음')
         ws = book[sheet]

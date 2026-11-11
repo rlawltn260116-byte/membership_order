@@ -2,6 +2,9 @@
 
 import { submissionContent } from "../worker/order-runner/order-approval.mjs";
 import { splitDestination } from "../worker/order-runner/b2b-destination.mjs";
+import { inspectWorkbook, selectWorksheet, worksheetMatrix, workbookProblem, duplicateOrderFiles, type SourceWorkbook } from "../worker/order-runner/workbook-policy.mjs";
+import type { Workbook } from "exceljs";
+import WorkbookSheetPicker from "./workbook-sheet-picker";
 
 import { orderChannelGroups, normalizeChannelName, nextPreparation, scheduleLabel } from "../worker/order-runner/schedule.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -60,6 +63,7 @@ import { createOrderJob, getOrderJob, listOrderJobs, updateOrderJob } from "@/li
 import InventoryRegistrationPage from "./inventory-registration-page";
 
 type OrderRow = {
+  sourceSheet: string;
   lineNo: number;
   sourceSystem: string;
   orderId: string;
@@ -80,6 +84,8 @@ type OrderRow = {
 };
 
 type Job = {
+  selectedSheet?: string;
+  sourceWorkbook?: SourceWorkbook;
   scheduledPreparation?: { runAt: string; receiptDeadlineAt: string; method: string } | null;
   id: string;
   filename: string;
@@ -359,29 +365,24 @@ function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum") {
   return parsed;
 }
 
-async function parseXlsx(file: File) {
+async function loadXlsx(file: File) {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
   const bytes = await file.arrayBuffer();
   await workbook.xlsx.load(bytes);
-  const firstSheet = workbook.worksheets[0];
-  if (!firstSheet) throw new Error("엑셀 파일에 시트가 없습니다.");
-  const matrix: unknown[][] = [];
-  for (let rowNumber = 1; rowNumber <= firstSheet.rowCount; rowNumber += 1) {
-    const row = firstSheet.getRow(rowNumber);
-    const values: string[] = [];
-    for (let column = 1; column <= firstSheet.columnCount; column += 1) {
-      values.push(row.getCell(column).text);
-    }
-    matrix.push(values);
-  }
-  const rows = parseThkcWorkbookRows(matrix, /보필/.test(file.name) ? "bofeel" : "eroum");
+  return workbook;
+}
+
+function parseXlsx(workbook: Workbook, filename: string, selectedSheet: string) {
+  const sheet = selectWorksheet(workbook, selectedSheet);
+  const matrix = worksheetMatrix(sheet);
+  const rows = parseThkcWorkbookRows(matrix, /보필/.test(filename) ? "bofeel" : "eroum");
   const parsed = rows.length ? rows : parseGenericWorkbookRows(matrix);
   if (!parsed.length) {
     throw new Error("지원되는 주문 열을 찾지 못했습니다. THKC 발주서 또는 주문 엑셀 양식을 확인해 주세요.");
   }
   if (parsed.length > 5000) throw new Error("한 파일에서 처리할 수 있는 주문은 최대 5,000건입니다.");
-  return parsed;
+  return parsed.map(row => ({ ...row, source_sheet: sheet.name }));
 }
 
 function cell(row: Record<string, unknown>, key: string) {
@@ -431,6 +432,7 @@ function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
   }
 
   return {
+    sourceSheet: cell(raw, "source_sheet"),
     lineNo: Number(cell(raw, "__line_no")) || index + 2,
     sourceSystem: normalizeChannelName(cell(raw, "source_system") || cell(raw, "site") || cell(raw, "erp") || "미지정"),
     orderId: cell(raw, "order_id"),
@@ -746,6 +748,11 @@ export default function OrderOpsApp() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [previewRows, setPreviewRows] = useState<OrderRow[]>([]);
+  const [uploadWorkbook, setUploadWorkbook] = useState<Workbook | null>(null);
+  const [sourceWorkbook, setSourceWorkbook] = useState<SourceWorkbook | null>(null);
+  const [selectedSheet, setSelectedSheet] = useState("");
+  const uploadGeneration = useRef(0);
+  const hasUpload = useRef(false);
   const [filename, setFilename] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -784,26 +791,34 @@ export default function OrderOpsApp() {
   const summary = viewMode === "orders" ? orderSummary : globalSummary;
 
   async function openJob(id: string) {
+    const generation = ++uploadGeneration.current;
     const data = await getOrderJob(id) as Job | null;
+    if (generation !== uploadGeneration.current) return;
     if (!data) {
       setMessage("작업을 불러오지 못했습니다.");
       return;
     }
     setActiveJob(data);
+    hasUpload.current = false;
+    setUploadWorkbook(null);
+    setSourceWorkbook(null);
+    setSelectedSheet("");
     setPreviewRows([]);
     setFilename(data.filename);
   }
 
   async function loadJobs(silent = false) {
+    const generation = uploadGeneration.current;
     if (!silent) setLoading(true);
     try {
       const data = await listOrderJobs();
       const refreshedJobs = data as Job[];
       setJobs(refreshedJobs);
+      if (generation !== uploadGeneration.current || hasUpload.current) return;
       if (activeJob) {
         const refreshedActiveJob = refreshedJobs.find((job) => job.id === activeJob.id);
         if (refreshedActiveJob) setActiveJob(refreshedActiveJob);
-      } else if (data[0]) {
+      } else if (!hasUpload.current && data[0]) {
         await openJob(String(data[0].id));
       }
     } catch (error) {
@@ -814,10 +829,16 @@ export default function OrderOpsApp() {
   }
 
   async function handleFile(file: File) {
+    const generation = ++uploadGeneration.current;
+    hasUpload.current = true;
+    setViewMode("orders");
     setMessage("");
     setFilename(file.name);
     setActiveJob(null);
     setPreviewRows([]);
+    setUploadWorkbook(null);
+    setSourceWorkbook(null);
+    setSelectedSheet("");
     if (!file.name.toLowerCase().endsWith(".xlsx")) {
       setMessage("주문 파일은 .xlsx 형식으로 올려주세요.");
       return;
@@ -827,17 +848,39 @@ export default function OrderOpsApp() {
       return;
     }
     try {
-      const rawRows = await parseXlsx(file);
-      const parsed = rawRows.map(validateOrder);
-      setPreviewRows(parsed);
-      setMessage(`${parsed.length}건을 읽었습니다. 저장하면 다른 PC에서도 이어서 볼 수 있습니다.`);
+      const workbook = await loadXlsx(file);
+      if (generation !== uploadGeneration.current) return;
+      const source = inspectWorkbook(workbook, file.name);
+      setUploadWorkbook(workbook);
+      setSourceWorkbook(source);
+      const visible = source.sheets.filter(sheet => sheet.state === "visible");
+      if (!visible.length) throw new Error("보이는 시트가 없습니다. 발주 대상을 확인해 주세요.");
+      if (visible.length > 1) {
+        setMessage("시트가 여러 개여서 보류했습니다. 아래 목록을 확인하고 처리할 시트 하나를 선택해 주세요.");
+      } else {
+        selectUploadSheet(workbook, file.name, visible[0].name);
+      }
     } catch (error) {
+      if (generation !== uploadGeneration.current) return;
       setMessage(error instanceof Error ? error.message : "엑셀 파일을 읽지 못했습니다.");
     }
   }
 
+  function selectUploadSheet(workbook: Workbook, name: string, sheet: string) {
+    setSelectedSheet(sheet);
+    setPreviewRows([]);
+    if (!sheet) { setMessage("처리할 시트를 선택해 주세요."); return; }
+    try {
+      const parsed = parseXlsx(workbook, name, sheet).map(validateOrder);
+      setPreviewRows(parsed);
+      setMessage(`${sheet} 시트에서 ${parsed.length}건을 읽었습니다. 선택한 시트만 저장합니다.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "선택한 시트를 읽지 못했습니다.");
+    }
+  }
+
   async function saveJob() {
-    if (!previewRows.length || !filename) return;
+    if (!previewRows.length || !filename || workbookProblem({ filename, selectedSheet, sourceWorkbook, rows: previewRows })) return;
     setLoading(true);
     try {
       const now = new Date().toISOString();
@@ -846,6 +889,8 @@ export default function OrderOpsApp() {
       const failedRows = previewRows.filter((row) => row.status === "FAILED").length;
       const job = await createOrderJob({
         filename,
+        selectedSheet,
+        sourceWorkbook,
         sourceSystem: previewRows[0]?.sourceSystem || "미지정",
         status: failedRows ? "FAILED" : holdRows ? "HOLD" : "READY",
         totalRows: previewRows.length,
@@ -874,6 +919,8 @@ export default function OrderOpsApp() {
 
   async function queueExecution(reserve = false) {
     if (!activeJob) return;
+    const problem = workbookProblem(activeJob);
+    if (problem) { setMessage(problem); return; }
     setLoading(true);
     try {
       const queuedAt = new Date().toISOString();
@@ -932,6 +979,7 @@ export default function OrderOpsApp() {
   }
 
   async function queueFinalSubmission(approvalCode: string) {
+    if (workbookProblem(activeJob)) return;
     if (!activeJob?.report || activeJob.status !== "REVIEWED" || activeJob.dashboardReview?.decision !== "ACCEPTED") return;
     if (activeJob.report.failedRows > 0 || activeJob.report.holdRows > 0 || activeJob.report.successRows !== activeJob.report.totalRows) return;
     if (!activeJob.report.canSubmit || (activeJob.report.totalRows !== 1 && !(activeJob.sourceSystem === "보필" && activeJob.report.transport === "HTTP"))) return;
@@ -995,6 +1043,8 @@ export default function OrderOpsApp() {
   }, [activeJob?.id]);
 
   const currentTitle = activeJob ? activeJob.filename : filename || "새 주문 파일";
+  const sheetProblem = workbookProblem(activeJob ?? { filename, selectedSheet, sourceWorkbook, rows: previewRows });
+  const duplicateFiles = duplicateOrderFiles(activeJob ?? { filename, sourceSystem: previewRows[0]?.sourceSystem }, jobs);
 
   return (
     <main className="ops-shell min-h-screen bg-[#f8faf9] text-slate-900">
@@ -1020,7 +1070,7 @@ export default function OrderOpsApp() {
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               새로고침
             </Button>
-            <Button onClick={() => inputRef.current?.click()}>
+            <Button onClick={() => inputRef.current?.click()} disabled={loading}>
               <Upload className="h-4 w-4" />
               주문 엑셀 업로드
             </Button>
@@ -1104,20 +1154,24 @@ export default function OrderOpsApp() {
                   <Download className="h-4 w-4" />
                   리포트 다운로드
                 </Button>
-                {!activeJob && previewRows.length ? (
-                  <Button onClick={() => void saveJob()} disabled={loading}>
+                {!activeJob && sourceWorkbook ? (
+                  <Button onClick={() => void saveJob()} disabled={loading || Boolean(sheetProblem)}>
                     {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                     클라우드 저장
                   </Button>
                 ) : (
-                  <><Button variant="outline" onClick={() => void queueExecution(true)} disabled={process.env.NEXT_PUBLIC_ENABLE_ORDER_PREPARATION_SCHEDULING !== "true" || !activeJob || !nextPreparation(activeJob.sourceSystem) || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>시간표로 준비 예약 (기본 꺼짐)</Button>
-                  <Button onClick={() => void queueExecution()} disabled={!activeJob || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>
+                  <><Button variant="outline" onClick={() => void queueExecution(true)} disabled={Boolean(sheetProblem) || process.env.NEXT_PUBLIC_ENABLE_ORDER_PREPARATION_SCHEDULING !== "true" || !activeJob || !nextPreparation(activeJob.sourceSystem) || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>시간표로 준비 예약 (기본 꺼짐)</Button>
+                  <Button onClick={() => void queueExecution()} disabled={Boolean(sheetProblem) || !activeJob || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>
                     <PlayCircle className="h-4 w-4" />
                     서버 준비 요청
                   </Button></>
                 )}
               </div>
             </div>
+
+            {!activeJob && sourceWorkbook ? <WorkbookSheetPicker source={sourceWorkbook} selectedSheet={selectedSheet} disabled={loading} onSelect={(sheet) => { if (uploadWorkbook && !loading) selectUploadSheet(uploadWorkbook, filename, sheet); }} /> : null}
+            {activeJob ? <div className="border-b border-slate-200 px-4 py-3 text-sm">처리 시트: {activeJob.selectedSheet || "미선택"}{activeJob.sourceWorkbook?.sheets.some(sheet => sheet.state !== "visible") ? " · 숨김 시트 있음 (처리 제외)" : ""}{sheetProblem ? <p role="alert" className="mt-2 text-amber-800">{sheetProblem}</p> : null}</div> : null}
+            {duplicateFiles.length ? <div role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">같은 날짜·같은 업체의 발주서가 이미 {duplicateFiles.length}개 있습니다. 수정본·추가본인지 확인해 주세요. 자동 차단하지 않습니다.<ul className="mt-2 list-inside list-disc">{duplicateFiles.map((job) => <li key={job.id}>{job.filename}</li>)}</ul></div> : null}
 
             {activeJob?.scheduledPreparation ? <p className="border-b border-slate-200 px-4 py-3 text-sm text-slate-600">준비 예약: {formatDateTime(activeJob.scheduledPreparation.runAt)} · 접수마감: {formatDateTime(activeJob.scheduledPreparation.receiptDeadlineAt)} · 실제 제출은 검토·최종 승인 후 실행</p> : null}
             {message ? <div className="border-b border-slate-200 bg-[#fff8e6] px-4 py-3 text-sm text-slate-800">{message}</div> : null}

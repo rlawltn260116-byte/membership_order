@@ -128,6 +128,13 @@ def order_type(order_id: str) -> str:
     return "UNKNOWN"
 
 
+def select_analysis_sheet(workbook):
+    visible = [sheet for sheet in workbook.worksheets if sheet.sheet_state == 'visible']
+    if len(visible) != 1:
+        raise ValueError('보이는 시트를 하나로 확정할 수 없어 분석 보류: 사람이 시트를 선택해야 합니다.')
+    return visible[0]
+
+
 def main(source_dir: Path) -> None:
     files = []
     for path in sorted(source_dir.glob("*.xlsx")):
@@ -144,7 +151,11 @@ def main(source_dir: Path) -> None:
     for path in files:
         try:
             workbook = load_workbook(path, data_only=True, read_only=True)
-            sheet = workbook[workbook.sheetnames[0]]
+            try:
+                sheet = select_analysis_sheet(workbook)
+            except ValueError:
+                workbook.close()
+                raise
             sheet_names[text(sheet.title)] += 1
             header_blocks = find_header_blocks(sheet)
             if not header_blocks:

@@ -10,14 +10,16 @@ from http_queue import QueueSession, cleanup_bofeel, prepare_eroum_group, prepar
 
 def row(vendor='eroum', line=1, quantity=1, memo=''):
     eroum = vendor == 'eroum'
-    return {'lineNo': line, 'quantity': quantity, 'sourceKey': 'mock-source-' + str(line),
+    return {'lineNo': line, 'sourceSheet': '발주', 'quantity': quantity, 'sourceKey': 'mock-source-' + str(line),
         'mapping': {'productId': 'PRO2022102700012' if eroum else '1000000025',
                     'model': 'DYJ-03' if eroum else 'BFSH10', 'optionName': '', 'optionId': '' if eroum else '31'},
         'recipient': {'name': '시험', 'phone': '01000000000', 'postcode': '04524', 'address': '시험로 1', 'detail': '', 'memo': memo}}
 
 
 def group(vendor='eroum', rows=None):
-    return {'vendor': vendor, 'addressMode': 'new' if vendor == 'eroum' else 'shippingNew', 'rows': rows or [row(vendor)]}
+    return {'vendor': vendor, 'addressMode': 'new' if vendor == 'eroum' else 'shippingNew', 'rows': rows or [row(vendor)],
+            'filename': '모의 발주서.xlsx', 'selectedSheet': '발주',
+            'sourceWorkbook': {'filename': '모의 발주서.xlsx', 'sheets': [{'name': '발주', 'state': 'visible'}]}}
 
 
 def product():
@@ -78,6 +80,31 @@ class FakeBofeel:
 
 
 class QueueTests(unittest.TestCase):
+    def test_sheet_provenance_is_held_before_login_or_session_creation(self):
+        from copy import deepcopy
+        valid = group('bofeel')
+        for change in ('missing-selection', 'wrong-name', 'hidden', 'other-row', 'missing-workbook', 'wrong-file'):
+            value = deepcopy(valid)
+            if change == 'missing-selection':
+                value.pop('selectedSheet')
+            elif change == 'wrong-name':
+                value['selectedSheet'] = '없는시트'
+            elif change == 'hidden':
+                value['sourceWorkbook']['sheets'][0]['state'] = 'hidden'
+            elif change == 'other-row':
+                value['rows'][0]['sourceSheet'] = '다른시트'
+            elif change == 'missing-workbook':
+                value.pop('sourceWorkbook')
+            else:
+                value['filename'] = '다른파일.xlsx'
+            factory = Mock(side_effect=AssertionError('사이트 접근 금지'))
+            with self.subTest(change=change), patch('sys.stdout', new_callable=io.StringIO) as output:
+                run('bofeel', [value], {'ENABLE_B2B_HTTP_CART': 'true'}, session_factory=factory)
+                result = json.loads(output.getvalue())
+                self.assertFalse(result['submissionReady'])
+                self.assertEqual(result['details'][0]['status'], 'HOLD')
+                factory.assert_not_called()
+
     def test_dynamic_rows_preserve_unit_price_quantities_and_only_source_memos(self):
         rows = [row(quantity=2, memo='문 앞'), row(line=2, quantity=3, memo='직접 전달')]
         draft = prepare_eroum_group(Mock(origin='https://eroumcare.com'), group(rows=rows), eroum_source(), {'PRO2022102700012': product()})

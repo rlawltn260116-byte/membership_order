@@ -6,10 +6,12 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { prepareHttpJob } from "../b2b-queue.mjs";
 import { sourceRowKey, ledgerReservation } from "../b2b-orders.mjs";
 import { submissionContent } from "../order-approval.mjs";
+import { workbookProblem, type SourceWorkbook } from "../workbook-policy.mjs";
 
 type RowStatus = "READY" | "HOLD" | "FAILED";
 
 type OrderRow = {
+  sourceSheet?: string;
   lineNo?: number;
   sourceSystem?: string;
   orderId?: string;
@@ -30,6 +32,8 @@ type OrderRow = {
 type ExecutionMode = "PREPARE" | "SUBMIT";
 
 type OrderJob = {
+  selectedSheet?: string;
+  sourceWorkbook?: SourceWorkbook;
   filename?: string;
   sourceDate?: string;
   scheduledPreparation?: PreparationReservation | null;
@@ -611,7 +615,10 @@ async function prepareReport(job: OrderJob, browser: Browser | null): Promise<Wo
   let httpCanSubmit = false;
 
   const scheduleProblem = !submitMode ? reservationProblem(job) : null;
-  if (scheduleProblem) {
+  const sheetProblem = workbookProblem(job);
+  if (sheetProblem) {
+    for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason: sheetProblem });
+  } else if (scheduleProblem) {
     for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason: scheduleProblem });
   } else if (submitMode && !submitApproved) {
     const reason = rows.length !== 1
@@ -718,7 +725,7 @@ async function runOnce() {
         if (job.executionMode === "SUBMIT") submittedJobAttempted = true;
         if (usesHttp(job)) {
           httpJobAttempted = true;
-        } else if (!browser) browser = await chromium.launch({ headless: true });
+        } else if (!browser && !workbookProblem(job)) browser = await chromium.launch({ headless: true });
         const report = await prepareReport(job, browser);
         const submitMode = job.executionMode === "SUBMIT";
         const completed = submitMode && report.submittedRows === report.totalRows && report.failedRows === 0 && report.holdRows === 0;

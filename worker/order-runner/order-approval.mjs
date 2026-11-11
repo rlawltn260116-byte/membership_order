@@ -3,6 +3,15 @@ export function submissionContent(job) {
   const fields = ["lineNo", "sourceSystem", "orderId", "productName", "option", "quantity", "expectedPrice",
     "recipientName", "recipientPhone", "zipcode", "address", "addressDetail", "memo", "destination",
     "주문번호", "납품처", "납품처전화번호", "품명", "주문수량", "비고(내역)"];
+  const sheets = (Array.isArray(job.sourceWorkbook?.sheets) ? job.sourceWorkbook.sheets : [])
+    .map(sheet => [String(sheet?.name ?? ""), String(sheet?.state ?? "")]);
+  const rows = (job.rows ?? []).map(row => {
+    const data = row.postcodeSearchResponse?.resultData;
+    const postcodeEvidence = row.postcodeSearchResponse === undefined ? null : [String(data?.codeData?.code ?? ""),
+      (Array.isArray(data?.addressData) ? data.addressData : [])
+        .map(item => [item?.roadAddress, item?.groundAddress, item?.zoneCode].map(value => String(value ?? "")))];
+    return [[...fields, "sourceFile", "sourceDate", "sourceSheet"].map(key => String(row[key] ?? "")), postcodeEvidence];
+  });
   return JSON.stringify([String(job.sourceSystem ?? ""), String(job.filename ?? job.sourceFile ?? ""), String(job.sourceDate ?? ""),
-    (job.rows ?? []).map((row) => [...fields, "sourceFile", "sourceDate"].map((key) => String(row[key] ?? "")))]);
+    String(job.selectedSheet ?? ""), String(job.sourceWorkbook?.filename ?? ""), sheets, rows]);
 }

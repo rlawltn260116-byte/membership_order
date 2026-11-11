@@ -5,9 +5,10 @@ import { catalog, planOrders, mapProduct, splitDestination, submissionProblem, s
 import { prepareHttpJob, runQueueVendor } from "./b2b-queue.mjs";
 import { submissionContent } from "./order-approval.mjs";
 
-const row = (changes = {}) => ({ lineNo: 1, sourceSystem: "이로움", orderId: "SO1234567890", productName: "자세변환용구 DYJ-03", quantity: 1,
+const row = (changes = {}) => ({ lineNo: 1, sourceSheet: "발주", sourceSystem: "이로움", orderId: "SO1234567890", productName: "자세변환용구 DYJ-03", quantity: 1,
   recipientName: "시험", recipientPhone: "010-0000-0000", zipcode: "04524", address: "시험로 1", addressDetail: "1층", memo: "", status: "READY", ...changes });
-const job = (rows = [row()]) => ({ id: "시험작업", filename: "20261006_직배 발주서.xlsx", sourceSystem: "이로움", executionMode: "PREPARE", rows });
+const job = (rows = [row()]) => ({ id: "시험작업", filename: "20261006_직배 발주서.xlsx", selectedSheet: "발주",
+  sourceWorkbook: { filename: "20261006_직배 발주서.xlsx", sheets: [{ name: "발주", state: "visible" }] }, sourceSystem: "이로움", executionMode: "PREPARE", rows });
 function approved() {
   const env = { ENABLE_B2B_HTTP_SUBMIT: "true", FINAL_SUBMISSION_APPROVAL_KEY: "모의시험승인코드12345" };
   const value = { ...job(), executionMode: "SUBMIT", claimedFromStatus: "SUBMIT_QUEUED", dashboardReview: {
@@ -49,7 +50,7 @@ test("같은 업체·수취인·연락처·주소인 행만 묶고 다른 배송
 });
 
 test("공통 발주 양식과 비고를 변환하고 우편번호 없는 주소는 HOLD다", () => {
-  const common = { "주문번호": "SO1234567890", "납품처": "시험로 1_시험", "납품처전화번호": "010-0000-0000", "품명": "DYJ-03", "주문수량": "2", "비고(내역)": "문 앞", zipcode: "04524" };
+  const common = { sourceSheet: "발주", "주문번호": "SO1234567890", "납품처": "시험로 1_시험", "납품처전화번호": "010-0000-0000", "품명": "DYJ-03", "주문수량": "2", "비고(내역)": "문 앞", zipcode: "04524" };
   const plan = planOrders(job([common]));
   assert.equal(plan.rows[0].recipient.memo, "문 앞");
   assert.equal(plan.rows[0].quantity, 2);
@@ -181,7 +182,9 @@ test("두 업체 모두 공란·THK 원주문번호를 허용하고 수정본 �
     const plan = planOrders(first);
     assert.equal(plan.rows[0].status, "READY");
     for (const filename of ["20261006_직배 발주서_수정본.xlsx", "20261006_직배 발주서_v2.xlsx", "20261006_직배 발주서 (1).xlsx"]) {
-      assert.equal(planOrders({ ...first, id: "재업로드", filename, rows: [row({ orderId: "THK", sourceSystem, productName })] }).rows[0].sourceKey, plan.rows[0].sourceKey);
+      const revised = planOrders({ ...first, id: "재업로드", filename, sourceWorkbook: { ...first.sourceWorkbook, filename }, rows: [row({ orderId: "THK", sourceSystem, productName })] });
+      assert.equal(revised.rows[0].status, "READY");
+      assert.equal(revised.rows[0].sourceKey, plan.rows[0].sourceKey);
     }
     for (const change of [{ lineNo: 2 }, { quantity: 2 }, { address: "모의로 2" }]) assert.notEqual(planOrders({ ...first, rows: [{ ...first.rows[0], ...change }] }).rows[0].sourceKey, plan.rows[0].sourceKey);
     assert.equal(planOrders({ ...first, filename: "날짜없음.xlsx" }).rows[0].status, "HOLD");
@@ -193,7 +196,7 @@ test("두 업체 모두 공란·THK 원주문번호를 허용하고 수정본 �
   const used = new Set(); let sends = 0;
   const callbacks = { env, reserveLedger: async (_id,key) => { if(used.has(key)) return false; used.add(key); return true; }, lockRow: async () => true, record: async () => {}, transport: async () => { sends++; return { state:"SUBMITTED",orderNumber:"20261111000001" }; } };
   assert.equal((await submitOnePrepared({ ...callbacks, job:value, prepared:{ submissionReady:true,sourceKey:planOrders(value).rows[0].sourceKey } })).state,"SUBMITTED");
-  const revised = { ...value, filename:"20261006_직배 발주서_수정본.xlsx" }; sign(revised);
+  const revised = { ...value, filename:"20261006_직배 발주서_수정본.xlsx", sourceWorkbook: { ...value.sourceWorkbook, filename:"20261006_직배 발주서_수정본.xlsx" } }; sign(revised);
   assert.equal((await submitOnePrepared({ ...callbacks, job:revised, prepared:{ submissionReady:true,sourceKey:planOrders(revised).rows[0].sourceKey } })).state,"HOLD");
   assert.equal(sends,1);
 });

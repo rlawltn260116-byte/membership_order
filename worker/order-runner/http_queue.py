@@ -254,7 +254,34 @@ def emit(value):
     print(json.dumps(value, ensure_ascii=False), flush=True)
 
 
+def workbook_problem(group):
+    source = group.get('sourceWorkbook')
+    if not isinstance(source, dict) or not isinstance(group.get('filename'), str) or not group['filename'] or source.get('filename') != group['filename']:
+        return '파일의 시트 정보가 없거나 파일명이 다릅니다. 다시 업로드해 주세요.'
+    sheets = source.get('sheets')
+    if not isinstance(sheets, list) or not sheets or any(not isinstance(sheet, dict) or
+            not isinstance(sheet.get('name'), str) or not sheet['name'] or
+            sheet.get('state') not in ('visible', 'hidden', 'veryHidden') for sheet in sheets):
+        return '파일의 시트 목록이 올바르지 않습니다.'
+    if len({sheet['name'] for sheet in sheets}) != len(sheets):
+        return '파일의 시트 이름이 중복되어 있습니다.'
+    selected = group.get('selectedSheet')
+    if not isinstance(selected, str) or not selected:
+        return '처리 시트 미선택: 사람이 시트를 확인해야 합니다.'
+    if not any(sheet['name'] == selected and sheet['state'] == 'visible' for sheet in sheets):
+        return '선택한 시트가 파일에 없거나 숨김 상태입니다.'
+    if not group.get('rows') or any(row.get('sourceSheet') != selected for row in group['rows']):
+        return '주문 행의 출처 시트와 선택한 시트가 다릅니다.'
+    return None
+
+
 def run(vendor, groups, env, session_factory=QueueSession, execution_mode='PREPARE'):
+    problem = next((issue for group in groups if (issue := workbook_problem(group))), None)
+    if problem:
+        emit({'event': 'prepared', 'submissionReady': False, 'reason': problem,
+              'details': [{'lineNo': row['lineNo'], 'status': 'HOLD', 'vendor': vendor, 'reason': problem}
+                          for group in groups for row in group['rows']]})
+        return
     if env.get('ENABLE_B2B_HTTP_CART') != 'true':
         emit({'event': 'prepared', 'details': [], 'reason': 'HTTP 준비 기능이 꺼져 있습니다.', 'submissionReady': False})
         return

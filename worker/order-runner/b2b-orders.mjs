@@ -4,6 +4,8 @@ export { splitDestination } from "./b2b-destination.mjs";
 import { readFileSync } from "node:fs";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { submissionContent } from "./order-approval.mjs";
+import { workbookProblem } from "./workbook-policy.mjs";
+import { resolveBofeelPostcode } from "./bofeel-postcode.mjs";
 
 export const catalog = JSON.parse(readFileSync(new URL("./data/b2b-product-map.json", import.meta.url), "utf8"));
 const norm = (v) => String(v ?? "").normalize("NFC").replace(/\s+/g, " ").trim();
@@ -60,9 +62,21 @@ export function normalizeRow(row, job, index) {
   const destination = row.destination ?? row["납품처"];
   const parsed = destination ? splitDestination(destination, vendor) : null;
   const name = norm(row.recipientName || parsed?.name);
-  const address = norm(row.address || parsed?.address);
+  const originalAddress = norm(row.address || parsed?.address);
+  let address = originalAddress;
   const phone = norm(row.recipientPhone ?? row["납품처전화번호"]).replace(/[\s-]/g, "");
-  const detail = norm(row.addressDetail), postcode = norm(row.zipcode);
+  let detail = norm(row.addressDetail), postcode = norm(row.zipcode);
+  let postcodeReason = "";
+  if (vendor === "bofeel" && row.postcodeSearchResponse !== undefined) {
+    const resolved = resolveBofeelPostcode(originalAddress, row.postcodeSearchResponse);
+    if (resolved.decision === "HOLD") postcodeReason = resolved.reason;
+    else if (postcode && postcode !== resolved.postcode) postcodeReason = "우편번호 보류: 입력한 우편번호와 검색 결과가 다릅니다.";
+    else {
+      address = resolved.roadAddress;
+      detail = [resolved.detail, detail].filter(Boolean).join(" ");
+      postcode = resolved.postcode;
+    }
+  }
   const lineNo = row.lineNo ?? index + 1;
   const quantity = String(row.quantity ?? row["주문수량"] ?? "").trim();
   const orderId = norm(row.orderId ?? row["주문번호"]);
@@ -70,12 +84,13 @@ export function normalizeRow(row, job, index) {
   if (!Number.isSafeInteger(lineNo) || lineNo < 1) reason = "원본 행 번호가 올바른 양의 정수가 아닙니다.";
   else if (!vendor) reason = "지원하지 않는 업체입니다.";
   else if (row.status && row.status !== "READY") reason = "운영 페이지 검증에서 보류된 행입니다.";
-  else if (destination && (!parsed || (row.recipientName && parsed.name !== name) || (row.address && parsed.address !== address))) reason = "납품처와 구조화된 배송지가 모호하거나 서로 다릅니다.";
+  else if (destination && (!parsed || (row.recipientName && parsed.name !== name) || (row.address && parsed.address !== originalAddress))) reason = "납품처와 구조화된 배송지가 모호하거나 서로 다릅니다.";
   else if (!name || !address || !/^\d{9,11}$/.test(phone)) reason = "수취인·주소·연락처가 불명확합니다.";
   else if (!/^\d{5}$/.test(postcode)) reason = "검증된 우편번호를 입력해야 합니다. 원본 주소에서 추측하지 않습니다.";
   else if (!/^[1-9]\d*$/.test(quantity) || !Number.isSafeInteger(Number(quantity))) reason = "수량은 양의 정수여야 합니다.";
   const mapped = mapProduct(vendor, row);
   if (mapped.status === "HOLD") reason = [reason, mapped.reason].filter(Boolean).join("; ");
+  if (postcodeReason) reason = [reason, postcodeReason].filter(Boolean).join("; ");
   const recipient = { name, address, detail, phone, postcode, memo: String(row.memo ?? row["비고(내역)"] ?? "") };
   const originalFile = norm(row.sourceFile ?? job.filename ?? job.sourceFile);
   const file = originalFile.split(/[\\/]/).at(-1).replace(/\.[^.]+$/, "")
@@ -85,12 +100,18 @@ export function normalizeRow(row, job, index) {
   // 주문번호는 참고값이다. 수정본 접미어를 제거한 파일 계열과 원본 행 내용을 메모리에서 해시한다.
   const sourceKey = createHash("sha256").update(JSON.stringify(["source-row-v2", vendor, file, date, lineNo,
     name, address, detail, phone, mapped.model ?? norm(row.productName ?? row["품명"]), mapped.optionId ?? norm(row.option), Number(quantity)])).digest("hex");
-  return { lineNo, vendor, orderId, quantity: Number(quantity), expectedPrice: row.expectedPrice ?? "", recipient, sourceKey, mapping: mapped,
-    status: reason ? "HOLD" : "READY", reason, reviewNotes: mapped.reviewNotes ?? [] };
+  const destinationSourceKey = createHash("sha256").update(JSON.stringify([vendor, name, originalAddress, norm(row.addressDetail), phone])).digest("hex");
+  return { lineNo, sourceSheet: row.sourceSheet, vendor, orderId, quantity: Number(quantity), expectedPrice: row.expectedPrice ?? "", recipient, sourceKey, destinationSourceKey, mapping: mapped,
+    status: reason ? "HOLD" : "READY", reason, reviewNotes: [...(mapped.reviewNotes ?? []), ...(postcodeReason ? [postcodeReason] : [])] };
 }
 
 export function planOrders(job) {
   const rows = (job.rows ?? []).map((row, index) => normalizeRow(row, job, index));
+  const problem = workbookProblem(job);
+  if (problem) {
+    for (const row of rows) { row.status = "HOLD"; row.reason = [problem, row.reason].filter(Boolean).join("; "); }
+    return { rows, groups: [] };
+  }
   const counts = new Map();
   const lines = new Map();
   for (const row of rows) counts.set(row.sourceKey, (counts.get(row.sourceKey) ?? 0) + 1);
@@ -101,16 +122,37 @@ export function planOrders(job) {
     if (counts.get(row.sourceKey) > 1) { row.status = "HOLD"; row.reason = "같은 원본 주문·상품 행이 중복되어 있습니다."; }
     if (lines.get(row.lineNo) > 1) { row.status = "HOLD"; row.reason = "같은 원본 행 번호가 중복되어 있습니다."; }
   }
-  const heldDestinations = new Set(rows.filter(row => row.status !== "READY").map(destinationKey));
-  const destinationNotes = key => [...new Set(rows.filter(row => destinationKey(row) === key).flatMap(row => row.reviewNotes))];
+  const resolvedBySource = new Map();
+  for (const row of rows.filter(row => row.status === "READY")) {
+    if (!resolvedBySource.has(row.destinationSourceKey)) resolvedBySource.set(row.destinationSourceKey, new Set());
+    resolvedBySource.get(row.destinationSourceKey).add(destinationKey(row));
+  }
   for (const row of rows) {
-    const notes = destinationNotes(destinationKey(row));
-    if (row.status === "READY" && heldDestinations.has(destinationKey(row))) { row.status = "HOLD"; row.reason = "같은 배송지 주문에 보류된 상품 행이 있어 전체 주문을 보류합니다."; }
+    if (resolvedBySource.get(row.destinationSourceKey)?.size > 1) {
+      row.status = "HOLD"; row.reason = "같은 원본 배송지의 우편번호·주소 확정 결과가 서로 다릅니다.";
+    }
+  }
+  const heldSources = new Set(rows.filter(row => row.status !== "READY").map(row => row.destinationSourceKey));
+  const heldDestinations = new Set(rows.filter(row => row.status !== "READY").map(destinationKey));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of rows) {
+      if (row.status === "READY" && (heldSources.has(row.destinationSourceKey) || heldDestinations.has(destinationKey(row)))) {
+        row.status = "HOLD"; row.reason = "같은 배송지 주문에 보류된 상품 행이 있어 전체 주문을 보류합니다.";
+        heldSources.add(row.destinationSourceKey); heldDestinations.add(destinationKey(row)); changed = true;
+      }
+    }
+  }
+  const destinationNotes = row => [...new Set(rows.filter(other => other.destinationSourceKey === row.destinationSourceKey || destinationKey(other) === destinationKey(row)).flatMap(other => other.reviewNotes))];
+  for (const row of rows) {
+    const notes = destinationNotes(row);
     row.reviewNotes = notes;
     if (row.status === "HOLD") row.reason = [row.reason, ...notes.filter(note => !row.reason.includes(note))].filter(Boolean).join("; ");
     if (row.status !== "READY") continue;
     const key = destinationKey(row);
-    if (!groups.has(key)) groups.set(key, { vendor: row.vendor, addressMode: row.vendor === "eroum" ? "new" : "shippingNew", rows: [] });
+    if (!groups.has(key)) groups.set(key, { vendor: row.vendor, addressMode: row.vendor === "eroum" ? "new" : "shippingNew",
+      filename: job.filename, selectedSheet: job.selectedSheet, sourceWorkbook: job.sourceWorkbook, rows: [] });
     groups.get(key).rows.push(row);
   }
   return { rows, groups: [...groups.values()] };
