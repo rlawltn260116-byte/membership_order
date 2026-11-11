@@ -272,5 +272,6 @@ def verify_bofeel(session, draft, group, source):
     if (money(rendered['display']['#totalSettlePrice']) != total or money(rendered['display']['#totalSettlePriceView']) != total or
             money(one(rendered['fields'],'settlePrice')) != total or rendered['requests']):
         raise LoginError('신규 배송비·화면·초안 합계 불일치')
-    draft.fields = rendered['fields']
+    # 렌더러 JSON은 [이름, 값] 목록이다. 전송용 urlencode가 받는 (이름, 값) 쌍으로 되돌린다.
+    draft.fields = [(k, v) for k, v in rendered['fields']]
     mark_verified('bofeel',draft)

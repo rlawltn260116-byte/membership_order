@@ -91,6 +91,7 @@
 
 ## 변경 기록
 
+- 11-11 [cardinalfish] 보필 첫 실제 주문 시험: 사용자 승인으로 20261006 발주서 17건 중 BFSH10 단일 상품 2건을 HTTP로 실제 제출했다(사용자가 취소). 보필 사이트 우편번호 검색 결과가 정확히 1건이고 도로명이 일치할 때만 쓰는 규칙을 승인받아 추가했다. 나머지 15건은 상품 연결표 미등록, 옵션 미확인, 주문번호 공란, 납품처 형식, 다품목으로 보류했다.
 - 2026-11-11 [cardinalfish] 주문 처리 job(`process-queue`)의 큐 처리 단계에 이로움·보필 로그인 secret 4개와 `B2B_SUBMISSION_LEDGER_KEY`를 연결하고, Playwright 컨테이너의 python3로 venv를 만들어 `requirements-http.txt`를 설치하는 단계(`B2B_HTTP_PYTHON` 지정)를 추가했다. `ENABLE_B2B_HTTP_CART`·`ENABLE_B2B_HTTP_SUBMIT`은 이 job에 넣지 않아 큐 HTTP 준비와 제출은 계속 꺼져 있다. workflow 실행·사이트 요청·커밋·푸시는 하지 않았다(Codex 한도로 Claude가 이어받음).
 
 - 2026-11-11 [cardinalfish] 기본 상품 단일 행의 서버 금액·배송비·출장비·화면 합계·결제·동의·신규 주소 검증과 변조·만료 차단을 추가했다. 이로움·보필 로그인 각 2회로 구조 분석과 최종 코드 시험을 수행하고, 시험 행 삭제와 양쪽 빈 장바구니·주문내역 첫 페이지 불변을 확인했다. DA-006 회색·BFMB20 파스텔블루 옵션 식별자를 읽기 전용 조회로 연결표에 추가했으나 옵션 준비는 HOLD다. 독립 검토 통과 뒤 자식 환경 최소화·VM 시간 제한·렌더 전후 필드 대조·할인 식별자 차단·제출 잠금 시험을 보완했다. 실제 제출·결제·회원/배송지 저장·운영 변경·workflow 실행·커밋·푸시는 하지 않았다. 검증·독립 검토는 `.orca-routing/tasks/b2b-amount/evidence.json`, 구조와 한계는 `docs/b2b-http-ordering.md` 참조.

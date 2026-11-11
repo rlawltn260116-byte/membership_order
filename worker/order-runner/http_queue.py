@@ -191,7 +191,11 @@ def prepare_bofeel_group(session, group, *, retain_for_submit=False):
         # 주소 저장·회원 반영 필드는 값이 없어야 한다. 선택된 상태를 보존해 제출하지 않는다.
         if values(draft.fields, 'reflectApplyDelivery'):
             raise LoginError('배송지 저장 선택 상태: 보류')
-        draft.fields = replace(draft.fields, 'receiverZipcode', '')
+        # 사이트 우편번호 선택 브리지는 구 우편번호 칸에 '-'를 넣는다. 승인 입력값이 있으면 그 값을 쓴다.
+        legacy = first['recipient'].get('legacyZipcode', '')
+        if legacy not in ('', '-'):
+            raise LoginError('구 우편번호 값 형식 미확인')
+        draft.fields = replace(draft.fields, 'receiverZipcode', legacy)
         draft.report['submission_ready'] = False
         draft.expected_fields = copy.deepcopy(draft.fields)
         try:

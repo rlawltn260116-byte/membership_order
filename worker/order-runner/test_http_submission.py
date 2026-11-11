@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 from http_cart import OrderDraft
 from http_login_draft import LoginError
-from http_submission import ENDPOINTS, parse_order_numbers, submit_prepared, validate_request
+from http_submission import ENDPOINTS, bofeel_end_redirect, parse_order_numbers, submit_prepared, validate_request
 from http_amounts import mark_verified
 
 
@@ -89,6 +89,37 @@ class SubmissionTests(unittest.TestCase):
         self.assertEqual(parse_order_numbers('eroum', text, completion=True), set())
         self.assertEqual(parse_order_numbers('eroum', '<a href="/shop/orderinquiryview.php?od_id=20261111000004">상세</a>'), {'20261111000004'})
         self.assertEqual(parse_order_numbers('bofeel', '<a href="/mypage/order_view.php?orderNo=261111000001">상세</a>'), {'261111000001'})
+
+    def test_bofeel_iframe_end_redirect_is_not_submitted_until_confirmed(self):
+        ok = "<script type=\"text/javascript\">parent.location.replace('../order/order_end.php?orderNo=2611111234567890');</script>"
+        self.assertEqual(bofeel_end_redirect(ok), '2611111234567890')
+        self.assertEqual(bofeel_end_redirect("<script>parent.location.href='https://bofeelmall.com/order/order_end.php?orderNo=2611111234567890';</script>"), '2611111234567890')
+        for bad in ("<script>alert('오류');parent.location.replace('../order/order_end.php?orderNo=2611111234567890');</script>",
+                    "<script>parent.location.replace('https://evil.example/order/order_end.php?orderNo=2611111234567890');</script>",
+                    "<script>parent.location.replace('../order/order_end.php?orderNo=2611111234567890&x=1');</script>",
+                    "<script>parent.location.replace('../order/cart.php');</script>",
+                    "<script>parent.location.replace('../order/order_end.php?orderNo=1');</script>",
+                    "<script>location.replace('../order/order_end.php?orderNo=2611111234567890');location.replace('../order/order_end.php?orderNo=2611111234567891');</script>",
+                    ''):
+            self.assertIsNone(bofeel_end_redirect(bad))
+        session = SimpleNamespace(vendor='bofeel', authenticated=True, origin='https://bofeelmall.com')
+        sent = Mock(return_value=response(ok))
+        result = submit_prepared(session, draft('bofeel'), authorized=True, environ={'ENABLE_B2B_HTTP_SUBMIT': 'true'}, transport=sent)
+        self.assertEqual(result, {'state': 'REDIRECTED', 'orderNumber': '2611111234567890'})
+        session = SimpleNamespace(vendor='eroum', authenticated=True, origin='https://eroumcare.com')
+        self.assertEqual(submit_prepared(session, draft('eroum'), authorized=True, environ={'ENABLE_B2B_HTTP_SUBMIT': 'true'},
+            transport=Mock(return_value=response(ok))), {'state': 'UNKNOWN'})
+    def test_list_pairs_hold_before_submission_marker(self):
+        d = draft('bofeel')
+        d.fields = [list(p) for p in d.fields]
+        d.expected_fields = [list(p) for p in d.fields]
+        d.amount_snapshot = tuple(d.fields)
+        session = SimpleNamespace(vendor='bofeel', authenticated=True, origin='https://bofeelmall.com')
+        sent = Mock()
+        with self.assertRaises(LoginError):
+            submit_prepared(session, d, authorized=True, environ={'ENABLE_B2B_HTTP_SUBMIT': 'true'}, transport=sent)
+        sent.assert_not_called()
+        self.assertFalse(getattr(session, 'submission_attempted', False))
 
 
 if __name__ == '__main__':

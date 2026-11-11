@@ -113,6 +113,14 @@ class AmountTests(unittest.TestCase):
         self.assertEqual(one(d.fields,'settlePrice'),'24')
         self.assertEqual(dict(s.read_amount.call_args.args[1])['receiverAddress'],g['rows'][0]['recipient']['address'])
 
+    def test_bofeel_renderer_json_lists_become_encodable_pairs(self):
+        import json as _json, urllib.parse as _parse
+        s,d,g,source,rendered=bofeel_case()
+        as_json=lambda *a,**k: _json.loads(_json.dumps(rendered(*a,**k)))
+        with patch('http_amounts.render',side_effect=as_json): verify_bofeel(s,d,g,source)
+        self.assertTrue(all(isinstance(p,tuple) for p in d.fields))
+        _parse.urlencode(d.fields)
+
     def test_bofeel_bad_consent_shape_bank_save_mode_country_binding_quantity_and_totals_hold(self):
         for mode in ('consent','name','bank','save','shipping','country','option','quantity','source_total','draft_total'):
             s,d,g,source,rendered=bofeel_case()

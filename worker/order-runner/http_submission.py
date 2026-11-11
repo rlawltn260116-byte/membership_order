@@ -60,11 +60,35 @@ def parse_order_numbers(vendor, html, *, completion=False):
     return numbers
 
 
+def bofeel_end_redirect(text):
+    """보필 주문 폼은 숨은 iframe으로 제출되고 응답 스크립트가 완료 페이지로 이동시킨다.
+
+    경고창 없이 같은 사이트 order_end.php?orderNo=<번호> 이동이 정확히 하나일 때만 번호를 돌려준다.
+    이 값은 접수 확정이 아니다. 호출자가 완료 페이지와 주문내역으로 다시 대조해야 한다.
+    """
+    if re.search(r'\balert\s*\(', text):
+        return None
+    targets = re.findall(r'location(?:\.href\s*=|\.replace\s*\(|\s*=)\s*[\'"]([^\'"]+)[\'"]', text)
+    if len(set(targets)) != 1:
+        return None
+    url = urllib.parse.urlsplit(urllib.parse.urljoin(ENDPOINTS['bofeel'], targets[0]))
+    query = urllib.parse.parse_qs(url.query, keep_blank_values=True)
+    if (url.scheme != 'https' or url.hostname not in ('bofeelmall.com', 'www.bofeelmall.com') or
+            url.port not in (None, 443) or url.path != '/order/order_end.php' or url.fragment or
+            set(query) != {'orderNo'} or len(query['orderNo']) != 1 or
+            not re.fullmatch(r'\d{12,24}', query['orderNo'][0])):
+        return None
+    return query['orderNo'][0]
+
+
 def validate_request(vendor, url, method, fields, expected_fields, *, totals_verified=False):
     if vendor not in ENDPOINTS or url != ENDPOINTS[vendor] or method != 'POST':
         raise LoginError('최종 제출 주소·메서드 허용 목록 불일치')
     if fields != expected_fields or not totals_verified:
         raise LoginError('준비한 필드·금액 대조 미완료')
+    if not isinstance(fields, list) or any(not isinstance(pair, tuple) or len(pair) != 2 for pair in fields):
+        # 전송 직전 직렬화 실패를 막는다. 제출 시도 표지 전에 HOLD한다.
+        raise LoginError('제출 필드 쌍 형식 불일치')
     allowed = EROUM_FIELDS if vendor == 'eroum' else BOFEEL_FIELDS
     for name, value in fields:
         if name not in allowed and not (vendor == 'bofeel' and re.fullmatch(r'(?:memberDcInfo|mileageInfo|priceInfo)\[\d+\]\[\d+\]', name)):
@@ -125,6 +149,11 @@ def submit_prepared(session, draft, *, authorized=False, environ=None, transport
             numbers = parse_order_numbers(session.vendor, text, completion=True)
             if len(numbers) == 1 and re.search(r'주문(?:이|이 정상적으로)?\s*(?:완료|접수)', Document(text).root.text()):
                 return {'state': 'SUBMITTED', 'orderNumber': next(iter(numbers))}
+            if session.vendor == 'bofeel':
+                redirected = bofeel_end_redirect(text)
+                if redirected:
+                    # 완료 페이지·주문내역 대조 전이므로 SUBMITTED가 아니다. 큐 경로는 UNKNOWN으로 취급한다.
+                    return {'state': 'REDIRECTED', 'orderNumber': redirected}
             return {'state': 'UNKNOWN'}
     except Exception:
         return {'state': 'UNKNOWN'}
