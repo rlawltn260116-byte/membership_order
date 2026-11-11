@@ -28,7 +28,7 @@ Configure these GitHub Actions secrets before enabling the worker:
 - `FIREBASE_SERVICE_ACCOUNT_JSON`: a Firebase service account JSON with Realtime Database access.
 - `EROUM_STORAGE_STATE_JSON`: Playwright storage state for the authorized Eroum account. Never commit it or put it in the dashboard.
 - `FINAL_SUBMISSION_APPROVAL_KEY`: 12자 이상의 최종 승인 코드. 운영 페이지는 원문을 저장하지 않고 작업 ID와 일회성 요청번호를 포함한 SHA-256 증명값만 Firebase에 저장합니다.
-- `B2B_SUBMISSION_LEDGER_KEY`: 원본 행 식별자를 공개 원장에 HMAC으로 남길 때 쓰는 별도 고정 비밀 키(32자 이상). HTTP와 기존 Playwright가 함께 사용한다. 현재 workflow에는 주입하지 않았으므로 기존 Playwright도 제출 재개 전에 별도 설정과 검증이 필요하며, 지금은 실제 제출을 하지 않는다. 이 키가 없는 경우에는 원장 예약 전에 HOLD한다.
+- `B2B_SUBMISSION_LEDGER_KEY`: 원본 행 식별자를 공개 원장에 HMAC으로 남길 때 쓰는 별도 고정 비밀 키(32자 이상). HTTP와 기존 Playwright가 함께 사용한다. 2026-11-11부터 `process-queue`의 큐 처리 단계에 주입한다. 지금은 실제 제출을 하지 않는다. 이 키가 없는 경우에는 원장 예약 전에 HOLD한다.
 
 `FIREBASE_QUEUE_PATH` defaults to `order-ops/jobs`; `WORKER_ID` is optional. State flow: `QUEUED → RUNNING → AWAITING_REVIEW → REVIEWED → SUBMIT_QUEUED → RUNNING → COMPLETED`. Failures and unresolved fields remain `HOLD` or `FAILED`. 최종 제출 워커는 검토 수락, 최종 승인, 승인 코드 증명값을 모두 다시 확인합니다.
 
@@ -78,15 +78,17 @@ npm run build
 - GitHub Actions secret 이름: `EROUM_LOGIN_ID`, `EROUM_LOGIN_PASSWORD`, `BOFEEL_LOGIN_ID`, `BOFEEL_LOGIN_PASSWORD`. 값은 저장소에 두지 않는다. 연결부는 해당 업체의 두 값만 자식 프로세스에 넘기고 Firebase·승인 키·GitHub 토큰은 넘기지 않는다.
 - 의존성: Python 3.12와 `pip install -r requirements-http.txt`(`cryptography`).
 - 실행: `node b2b-http-cart.mjs eroum` 또는 `bofeel`. 업체당 로그인 1회, 실패·시간 초과 시 재시도하지 않고 `cartCheckRequired`로 보고한다.
-- workflow: `order-worker.yml`의 `b2b-http-cart` job은 수동 실행(`workflow_dispatch`)이면서 저장소 변수 `ENABLE_B2B_HTTP_CART`가 `true`일 때만 돈다. 예약 실행에서는 돌지 않는다. 변수와 secret은 아직 만들지 않았고 job도 실행하지 않았다.
+- workflow: `order-worker.yml`의 `b2b-http-cart` job은 수동 실행(`workflow_dispatch`)이면서 저장소 변수 `ENABLE_B2B_HTTP_CART`가 `true`일 때만 돈다. 예약 실행에서는 돌지 않는다. 이 job은 아직 실행하지 않았다.
 - 시험: `node --test b2b-http-cart.test.mjs`, `python -m unittest discover -p "test_http*.py"`(`cryptography` 필요).
 
 ## 취합 행 기반 HTTP 큐 경로 (2026-11-11)
 
 위 `b2b-http-cart.mjs`는 기존 고정 시험 전용이다. 새 `b2b-orders.mjs`·`b2b-queue.mjs`·`http_queue.py`는 실제 취합 행을 상품 연결표와 대조하여 납품처별로 준비한다. 이로움은 `B2B_ORDER_TRANSPORT=http`일 때 선택하고 기본은 Playwright다. 보필 작업은 HTTP 준비 경로를 선택한다. 두 업체 모두 `ENABLE_B2B_HTTP_CART`가 정확히 `true`여야 하고 해당 업체의 로그인 secret이 필요하다. Python 3.12와 기존 `requirements-http.txt`가 필요하며 필요하면 실행 파일 경로를 `B2B_HTTP_PYTHON`으로 지정한다. 현재 workflow는 새 선택 변수·제출 변수를 넣지 않았으며 실행하지 않는다.
 
+실행 환경(2026-11-11): `process-queue`의 `Process queued orders` 단계는 `EROUM_LOGIN_ID`·`EROUM_LOGIN_PASSWORD`·`BOFEEL_LOGIN_ID`·`BOFEEL_LOGIN_PASSWORD`·`B2B_SUBMISSION_LEDGER_KEY` secret을 받는다. 그 앞의 `Install HTTP preparation Python dependencies` 단계가 Playwright 컨테이너의 `python3`(venv를 못 만들면 apt로 `python3`·`python3-venv` 설치)로 `$RUNNER_TEMP/b2b-http-venv`를 만들고 `requirements-http.txt`를 설치한 뒤 `B2B_HTTP_PYTHON`을 지정한다(`actions/setup-python` 미사용). `ENABLE_B2B_HTTP_CART`와 `ENABLE_B2B_HTTP_SUBMIT`은 이 job에 넣지 않았으므로 큐 HTTP 준비와 제출은 여전히 꺼져 있다.
+
 상품 연결표 `data/b2b-product-map.json`에는 상품번호·모델·품명·옵션 식별자만 있다. 확인된 기본 상품은 DYJ-03과 BFSH10이다. DA-006·BFMB20의 미확인 옵션과 연결표 밖 품명은 HOLD한다. 우편번호가 없는 원본 주소를 추측하지 않으며, 배송지 묶음·메모·빈 장바구니 확인 규칙은 `docs/b2b-http-ordering.md`를 따른다. 고객정보·단가·세션은 파일이나 로그로 내보내지 않는다.
 
-양 사이트의 최종 POST 함수는 `http_submission.py`에 있으나 **현재 모든 실제 초안은 금액·결제 검증 미완료로 제출 불가**다. `ENABLE_B2B_HTTP_SUBMIT`의 기본값도 꺼짐이며 workflow에서는 켜지 않는다. 추후 검증을 보완해도 기존 REVIEWED→주문 확정→승인 증명→신뢰 원장→행 잠금과 한 주문·한 행 제한이 필요하다. 승인 증명은 행 내용까지 묶는다. 별도의 고정 비밀 `B2B_SUBMISSION_LEDGER_KEY`(32자 이상)가 있어야 두 전송 경로가 공유하는 원본 행 키를 HMAC 처리하여 공개 일회성 원장에 예약할 수 있다. 이 키는 자식 프로세스에 넘기지 않고 workflow에 추가하지 않았으며, 교체할 때는 기존 원장의 중복 방지 기록 이전 절차가 필요하다. 다른 큐 작업·새 승인·전송 경로 교체에 의한 중복도 막는다. 모호한 응답은 UNKNOWN으로 멈추며 자동 재시도하지 않는다. 제출 함수는 가짜 HTTP 전송기로만 시험했다.
+양 사이트의 최종 POST 함수는 `http_submission.py`에 있으나 **현재 모든 실제 초안은 금액·결제 검증 미완료로 제출 불가**다. `ENABLE_B2B_HTTP_SUBMIT`의 기본값도 꺼짐이며 workflow에서는 켜지 않는다. 추후 검증을 보완해도 기존 REVIEWED→주문 확정→승인 증명→신뢰 원장→행 잠금과 한 주문·한 행 제한이 필요하다. 승인 증명은 행 내용까지 묶는다. 별도의 고정 비밀 `B2B_SUBMISSION_LEDGER_KEY`(32자 이상)가 있어야 두 전송 경로가 공유하는 원본 행 키를 HMAC 처리하여 공개 일회성 원장에 예약할 수 있다. 이 키는 자식 프로세스에 넘기지 않고 workflow에서는 큐 처리 단계에만 넣었으며, 교체할 때는 기존 원장의 중복 방지 기록 이전 절차가 필요하다. 다른 큐 작업·새 승인·전송 경로 교체에 의한 중복도 막는다. 모호한 응답은 UNKNOWN으로 멈추며 자동 재시도하지 않는다. 제출 함수는 가짜 HTTP 전송기로만 시험했다.
 
 새 시험은 `node --test b2b-orders.test.mjs`와 `python -B -m unittest discover -p "test_http*.py"`에 포함된다. 실제 발주 금지는 유지된다.

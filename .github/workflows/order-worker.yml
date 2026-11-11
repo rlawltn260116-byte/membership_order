@@ -56,6 +56,27 @@ jobs:
         if: steps.secrets.outputs.enabled == 'true'
         working-directory: worker/order-runner
         run: npm run build
+      # 큐의 HTTP 준비 모듈(http_queue.py)용 Python. 이 컨테이너에서는 actions/setup-python을 쓰지 않고
+      # 이미지의 python3(없으면 apt로 설치)로 venv를 만든다. 경로는 B2B_HTTP_PYTHON으로 다음 단계에 넘긴다.
+      - name: Install HTTP preparation Python dependencies
+        if: steps.secrets.outputs.enabled == 'true'
+        # 설치가 실패해도 기존 이로움 Playwright 처리는 계속 돌아야 한다. 실패하면 HTTP 준비만 보류된다.
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/b2b-http-venv"
+          # python3가 없거나 venv(ensurepip)가 빠진 이미지면 apt로 설치한 뒤 다시 만든다.
+          if ! python3 -m venv "$venv" >/dev/null 2>&1; then
+            rm -rf "$venv"
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-venv
+            python3 -m venv "$venv"
+          fi
+          "$venv/bin/python" -c "import sys; assert sys.version_info >= (3, 12), sys.version"
+          "$venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir -r worker/order-runner/requirements-http.txt
+          "$venv/bin/python" -c "import cryptography"
+          echo "B2B_HTTP_PYTHON=$venv/bin/python" >> "$GITHUB_ENV"
       - name: Process queued orders
         if: steps.secrets.outputs.enabled == 'true'
         working-directory: worker/order-runner
@@ -64,6 +85,12 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           EROUM_STORAGE_STATE_JSON: ${{ secrets.EROUM_STORAGE_STATE_JSON }}
           FINAL_SUBMISSION_APPROVAL_KEY: ${{ secrets.FINAL_SUBMISSION_APPROVAL_KEY }}
+          # HTTP 준비 로그인 값과 원장 HMAC 키. HTTP 제출 스위치와 준비 스위치는 넣지 않는다.
+          EROUM_LOGIN_ID: ${{ secrets.EROUM_LOGIN_ID }}
+          EROUM_LOGIN_PASSWORD: ${{ secrets.EROUM_LOGIN_PASSWORD }}
+          BOFEEL_LOGIN_ID: ${{ secrets.BOFEEL_LOGIN_ID }}
+          BOFEEL_LOGIN_PASSWORD: ${{ secrets.BOFEEL_LOGIN_PASSWORD }}
+          B2B_SUBMISSION_LEDGER_KEY: ${{ secrets.B2B_SUBMISSION_LEDGER_KEY }}
           FIREBASE_QUEUE_PATH: order-ops/jobs
           WORKER_ID: github-actions-order-worker
           GITHUB_TOKEN: ${{ github.token }}

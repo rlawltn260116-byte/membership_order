@@ -136,10 +136,58 @@ test("workflow의 HTTP 장바구니 job은 수동 실행과 저장소 변수가 
   for (const name of ["FIREBASE", "FINAL_SUBMISSION_APPROVAL_KEY", "EROUM_STORAGE_STATE_JSON", "GITHUB_TOKEN", "npm start"]) {
     assert.equal(httpJob.includes(name), false, name);
   }
-  for (const name of ["ENABLE_B2B_HTTP_CART", "_LOGIN_ID", "_LOGIN_PASSWORD", "http_preparation", "b2b-http-cart"]) {
+  // 주문 처리 job은 큐 HTTP 준비용 로그인 secret을 받지만, 준비 스위치와 고정 시험 스크립트는 쓰지 않는다.
+  for (const name of ["ENABLE_B2B_HTTP_CART", "http_preparation", "b2b-http-cart"]) {
     assert.equal(queueCode.includes(name), false, name);
   }
   assert.match(queueJob, /FINAL_SUBMISSION_APPROVAL_KEY: \$\{\{ secrets\.FINAL_SUBMISSION_APPROVAL_KEY \}\}/);
   const requirements = readFileSync(new URL("./requirements-http.txt", import.meta.url), "utf8");
   assert.match(requirements, /^cryptography==\d+\.\d+\.\d+$/m);
+});
+
+const readWorkflow = () => readFileSync(new URL("../../.github/workflows/order-worker.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const queueSteps = () => {
+  const queueJob = readWorkflow().split("\n  b2b-http-cart:\n")[0].split("\n  process-queue:\n")[1];
+  assert.ok(queueJob, "process-queue job 없음");
+  // 주석 줄을 빼고 단계 이름 기준으로 나눈다. 각 조각은 "- name: " 다음의 단계 본문이다.
+  const code = queueJob.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
+  return code.split("\n      - name: ").slice(1).map((text) => ({ name: text.split("\n")[0], text }));
+};
+
+test("workflow 어디에도 HTTP 제출 스위치가 없다", () => {
+  const workflow = readWorkflow();
+  assert.equal(workflow.includes("ENABLE_B2B_HTTP_SUBMIT"), false);
+  assert.equal(/HTTP_SUBMIT/.test(workflow), false);
+});
+
+test("process-queue의 큐 처리 단계에 HTTP 로그인 secret 4개와 원장 키가 전달된다", () => {
+  const step = queueSteps().find((s) => s.name === "Process queued orders");
+  assert.ok(step, "큐 처리 단계 없음");
+  assert.match(step.text, /\n        run: npm start(\n|$)/);
+  for (const name of ["EROUM_LOGIN_ID", "EROUM_LOGIN_PASSWORD", "BOFEEL_LOGIN_ID", "BOFEEL_LOGIN_PASSWORD", "B2B_SUBMISSION_LEDGER_KEY"]) {
+    assert.match(step.text, new RegExp(`\\n          ${name}: \\$\\{\\{ secrets\\.${name} \\}\\}\\n`), name);
+  }
+  // 준비 스위치는 그대로 b2b-http-cart job과 저장소 변수의 몫이다.
+  assert.equal(/ENABLE_B2B_HTTP_CART|vars\./.test(step.text), false);
+  // secret 값을 출력하는 명령이 없다.
+  assert.equal(/echo[^\n]*(LOGIN|LEDGER)/.test(readWorkflow()), false);
+});
+
+test("process-queue는 큐 처리 전에 이미지 python3로 venv를 만들고 HTTP 의존성을 설치한다", () => {
+  const steps = queueSteps();
+  const names = steps.map((s) => s.name);
+  const install = steps.find((s) => s.name === "Install HTTP preparation Python dependencies");
+  assert.ok(install, "Python 의존성 설치 단계 없음");
+  assert.ok(names.indexOf(install.name) < names.indexOf("Process queued orders"), "설치가 큐 처리보다 먼저여야 함");
+  assert.match(install.text, /^Install HTTP preparation Python dependencies\n        if: steps\.secrets\.outputs\.enabled == 'true'\n/);
+  assert.match(install.text, /shell: bash\n/);
+  assert.match(install.text, /set -euo pipefail/);
+  assert.match(install.text, /apt-get install -y --no-install-recommends python3 python3-venv/);
+  assert.match(install.text, /python3 -m venv "\$venv"/);
+  assert.match(install.text, /"\$venv\/bin\/python" -m pip install --disable-pip-version-check --no-cache-dir -r worker\/order-runner\/requirements-http\.txt/);
+  assert.match(install.text, /echo "B2B_HTTP_PYTHON=\$venv\/bin\/python" >> "\$GITHUB_ENV"/);
+  // 컨테이너 job에서는 setup-python을 쓰지 않는다.
+  assert.equal(steps.some((s) => s.text.includes("actions/setup-python")), false);
+  const job = readWorkflow().split("\n  process-queue:\n")[1].split("\n    steps:")[0];
+  assert.match(job, /container: mcr\.microsoft\.com\/playwright:v1\.55\.0-noble/);
 });
