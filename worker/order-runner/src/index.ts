@@ -4,7 +4,7 @@ import { getDatabase } from "firebase-admin/database";
 import { chromium, type Browser, type Page } from "playwright";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { prepareHttpJob } from "../b2b-queue.mjs";
-import { sourceRowKey, publicLedgerRowKey } from "../b2b-orders.mjs";
+import { sourceRowKey, ledgerReservation } from "../b2b-orders.mjs";
 import { submissionContent } from "../order-approval.mjs";
 
 type RowStatus = "READY" | "HOLD" | "FAILED";
@@ -30,6 +30,8 @@ type OrderRow = {
 type ExecutionMode = "PREPARE" | "SUBMIT";
 
 type OrderJob = {
+  filename?: string;
+  sourceDate?: string;
   scheduledPreparation?: PreparationReservation | null;
   id: string;
   sourceSystem?: string;
@@ -368,7 +370,7 @@ async function reserveSubmission(jobId: string, lineNo: number): Promise<{ reser
   return { reserved, value };
 }
 
-async function reserveTrustedSubmissionRequest(requestId: string, sourceKey?: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+async function reserveTrustedSubmissionRequest(requestId: string, sourceKey?: string | string[]): Promise<{ ok: true } | { ok: false; reason: string }> {
   const ledgerKey = process.env.B2B_SUBMISSION_LEDGER_KEY ?? "";
   if (sourceKey && ledgerKey.length < 32) return { ok: false, reason: "원본 행 중복 방지용 고정 비밀 키가 필요합니다." };
   const token = process.env.GITHUB_TOKEN ?? "";
@@ -400,12 +402,13 @@ async function reserveTrustedSubmissionRequest(requestId: string, sourceKey?: st
   } else if (existing.status !== 404) {
     return { ok: false, reason: `서버의 중복 주문 방지 기록을 읽지 못했습니다 (${existing.status}).` };
   }
-  const rowKey = sourceKey ? publicLedgerRowKey(sourceKey, ledgerKey) : "";
-  if (used.includes(requestId) || (rowKey && used.includes(rowKey))) {
-    return { ok: false, reason: "이미 사용된 최종 승인 요청입니다. 중복 주문 방지를 위해 다시 제출하지 않았습니다." };
+  const sourceKeys = sourceKey ? (Array.isArray(sourceKey) ? sourceKey : [sourceKey]) : [];
+  const reservation = ledgerReservation(used, requestId, sourceKeys, ledgerKey);
+  if (!reservation) {
+    return { ok: false, reason: "중복 원본 행·사용된 승인 요청 또는 이전 원장 이관 확인이 필요합니다. 제출하지 않았습니다." };
   }
   // 원본 행 키는 승인 요청번호나 큐 작업 ID가 바뀌어도 남아야 한다. 오래된 원장도 지우지 않는다.
-  const value = `${JSON.stringify([...used, requestId, ...(rowKey ? [rowKey] : [])], null, 2)}\n`;
+  const value = `${JSON.stringify(reservation, null, 2)}\n`;
   const saved = await fetch(baseUrl, {
     method: "PUT",
     headers,
@@ -479,13 +482,10 @@ async function submitEroumOrder(page: Page, jobId: string, lineNo: number, reque
   }
 }
 
-async function prepareEroumRow(page: Page, row: OrderRow, index: number, jobId: string, submitApproved: boolean, submissionRequestId: string): Promise<WorkerDetail> {
+async function prepareEroumRow(page: Page, row: OrderRow, index: number, jobId: string, submitApproved: boolean, submissionRequestId: string, sourceJob: OrderJob): Promise<WorkerDetail> {
   const lineNo = row.lineNo ?? index + 1;
   if (row.status !== "READY") {
     return { lineNo, status: "HOLD", reason: row.reason || "대시보드 검증에서 확인 대상으로 분류되었습니다." };
-  }
-  if (!/^SO\d{10}$/.test(row.orderId ?? "")) {
-    return { lineNo, status: "HOLD", reason: "고객 주문 식별자가 없거나 지점·재고 주문 후보입니다. 원본 확인 전에는 준비·제출하지 않습니다." };
   }
 
   const mapping = findProductMapping(row.productName);
@@ -557,7 +557,8 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number, jobId: 
   };
   if (!submitApproved) return preparedDetail;
 
-  const submitted = await submitEroumOrder(page, jobId, lineNo, submissionRequestId, sourceRowKey("eroum", row));
+  if (!sourceJob.filename || !/20\d{6}/.test(sourceJob.filename)) return { ...preparedDetail, status: "HOLD", reason: "원본 파일명·날짜가 없어 중복 방지 키를 확정할 수 없습니다." };
+  const submitted = await submitEroumOrder(page, jobId, lineNo, submissionRequestId, sourceRowKey("eroum", row, sourceJob));
   if (!submitted.ok) {
     return { ...preparedDetail, status: "HOLD", reason: submitted.reason };
   }
@@ -595,7 +596,7 @@ async function prepareReport(job: OrderJob, browser: Browser | null): Promise<Wo
     submitMode &&
     job.claimedFromStatus === "SUBMIT_QUEUED" &&
     job.dashboardReview?.reviewedFromStatus === "REVIEWED" &&
-    rows.length === 1 &&
+    (rows.length === 1 || (usesHttp(job) && job.sourceSystem === "보필")) &&
     approvalKey.length >= 12 &&
     approvalProofValid &&
     contentProofValid &&
@@ -651,7 +652,7 @@ async function prepareReport(job: OrderJob, browser: Browser | null): Promise<Wo
             continue;
           }
           try {
-            details.push(await prepareEroumRow(page, row, index, job.id, submitApproved, job.dashboardReview?.submissionRequestId ?? ""));
+            details.push(await prepareEroumRow(page, row, index, job.id, submitApproved, job.dashboardReview?.submissionRequestId ?? "", job));
           } catch (error) {
             details.push({ lineNo: row.lineNo ?? index + 1, status: "FAILED", reason: `이로움 주문 처리 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}` });
           }
@@ -679,7 +680,7 @@ async function prepareReport(job: OrderJob, browser: Browser | null): Promise<Wo
     shippingNoticeRows,
     submittedRows,
     reviewState: failedRows || holdRows ? "BLOCKED" : completed ? "COMPLETED" : "WAITING_FOR_DASHBOARD",
-    canSubmit: !submitMode && rows.length === 1 && successRows === rows.length && failedRows === 0 && holdRows === 0 && (!httpMode || httpCanSubmit),
+    canSubmit: !submitMode && (rows.length === 1 || (httpMode && job.sourceSystem === "보필")) && successRows === rows.length && failedRows === 0 && holdRows === 0 && (!httpMode || httpCanSubmit),
     transport: httpMode ? "HTTP" : "Playwright",
     details,
   };

@@ -1,10 +1,192 @@
 {
   "eroum": [
-    { "model": "DYJ-03", "names": ["DYJ-03", "자세변환용구 DYJ-03"], "it_id": "PRO2022102700012", "options": [{ "name": "", "io_id": "" }] },
-    { "model": "DA-006", "names": ["DA-006", "미끄럼방지매트리스 DA-006"], "it_id": "PRO2022042900001", "options": [{ "name": "회색", "io_id": "회색" }] }
+    {
+      "model": "DYJ-03",
+      "names": [
+        "DYJ-03",
+        "자세변환용구 DYJ-03"
+      ],
+      "it_id": "PRO2022102700012",
+      "options": [
+        {
+          "name": "",
+          "io_id": ""
+        }
+      ]
+    },
+    {
+      "model": "DA-006",
+      "names": [
+        "DA-006",
+        "미끄럼방지매트리스 DA-006"
+      ],
+      "it_id": "PRO2022042900001",
+      "options": [
+        {
+          "name": "회색",
+          "io_id": "회색"
+        }
+      ]
+    }
   ],
   "bofeel": [
-    { "model": "BFSH10", "names": ["BFSH10", "안전손잡이 BFSH10"], "goodsNo": "1000000025", "options": [{ "name": "", "optionSno": "31" }] },
-    { "model": "BFMB20", "names": ["BFMB20", "이동변기 BFMB20"], "goodsNo": "1000000674", "options": [{ "name": "파스텔블루", "optionSno": "6348" }] }
+    {
+      "model": "BFSH10",
+      "names": [
+        "BFSH10",
+        "안전손잡이 BFSH10"
+      ],
+      "goodsNo": "1000000025",
+      "options": [
+        {
+          "name": "",
+          "optionSno": "31"
+        }
+      ]
+    },
+    {
+      "model": "BFMB20",
+      "names": [
+        "BFMB20",
+        "이동변기 BFMB20"
+      ],
+      "goodsNo": "1000000674",
+      "options": [
+        {
+          "name": "파스텔블루",
+          "optionSno": "6348"
+        },
+        {
+          "name": "파스텔브라운",
+          "optionSno": "6347"
+        }
+      ]
+    },
+    {
+      "model": "BFMB5",
+      "names": [
+        "BFMB5",
+        "BFMB 5",
+        "이동변기 BFMB5"
+      ],
+      "goodsNo": "1000000675",
+      "options": [
+        {
+          "name": "",
+          "optionSno": "6350"
+        }
+      ]
+    },
+    {
+      "model": "동행(sk-130)",
+      "names": [
+        "동행(sk-130)",
+        "동행 SK-130",
+        "SK-130",
+        "성인용보행기 동행(sk-130)"
+      ],
+      "goodsNo": "1000000605",
+      "options": [
+        {
+          "name": "꽃무늬 / 1개 ~ 2개",
+          "optionSno": "4697"
+        },
+        {
+          "name": "체크그린 / 1개 ~ 2개",
+          "optionSno": "4699"
+        },
+        {
+          "name": "블루 / 1개 ~ 2개",
+          "optionSno": "5304"
+        },
+        {
+          "name": "꽃무늬 / 3개 이상",
+          "optionSno": "4698"
+        },
+        {
+          "name": "체크그린 / 3개 이상",
+          "optionSno": "4700"
+        },
+        {
+          "name": "블루 / 3개 이상",
+          "optionSno": "5305"
+        }
+      ]
+    },
+    {
+      "model": "장수(sk-120)",
+      "names": [
+        "장수(sk-120)",
+        "SK-120",
+        "성인용보행기 장수(sk-120)"
+      ],
+      "goodsNo": "1000000084",
+      "options": [
+        {
+          "name": "1개 ~ 2개",
+          "optionSno": "792"
+        },
+        {
+          "name": "3개 이상",
+          "optionSno": "3843"
+        }
+      ]
+    },
+    {
+      "model": "BOFEEL11",
+      "names": [
+        "BOFEEL11",
+        "목욕의자 BOFEEL11"
+      ],
+      "goodsNo": "1000000576",
+      "options": [
+        {
+          "name": "파스텔블루 / 1개 ~ 2개",
+          "optionSno": "4677"
+        },
+        {
+          "name": "파스텔핑크 / 1개 ~ 2개",
+          "optionSno": "4680"
+        },
+        {
+          "name": "파스텔블루 / 3개 ~ 4개",
+          "optionSno": "4678"
+        },
+        {
+          "name": "파스텔블루 / 5개 이상",
+          "optionSno": "4679"
+        },
+        {
+          "name": "파스텔핑크 / 3개 ~ 4개",
+          "optionSno": "4681"
+        },
+        {
+          "name": "파스텔핑크 / 5개 이상",
+          "optionSno": "4682"
+        }
+      ]
+    },
+    {
+      "model": "BFSC-112",
+      "names": [
+        "BFSC-112",
+        "목욕의자 BFSC-112"
+      ],
+      "goodsNo": "1000000694",
+      "options": [
+        {
+          "name": "1개~2개",
+          "optionSno": "6622"
+        },
+        {
+          "name": "3개~4개",
+          "optionSno": "6623"
+        },
+        {
+          "name": "5개 이상",
+          "optionSno": "6624"
+        }
+      ]
+    }
   ]
 }

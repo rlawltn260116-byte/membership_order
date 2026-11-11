@@ -354,7 +354,7 @@ def main(source_dir: Path) -> None:
         "schema": payload["schema"],
         "orderRules": {
             "customerOrderIdPattern": "^SO\\d{10}$",
-            "blankOrThkOrderId": "지점/재고 주문 후보. 고객 주문과 분리해 검토",
+            "blankOrThkOrderId": "사용자 지시(2026-11-11): 공란·THK 표기로 보류하지 않음. 원본 파일·날짜·행·배송지·상품·수량으로 중복 방지",
             "postcode": "원본에 우편번호가 없어 주소 검색 또는 주소 API 보완 필요",
             "recipient": "구분자로 수취인을 얻지 못하면 자동 제출 금지 후 검토",
             "phone": "휴대전화와 지역번호 유선전화를 모두 허용. 숫자만 있는 9~11자리는 표준 하이픈 형식으로 정규화하고 그 외 형식은 검토",

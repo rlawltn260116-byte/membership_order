@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
-from http_cart import OrderDraft
+from http_cart import OrderDraft, values
 from http_login_draft import LoginError
 from http_submission import ENDPOINTS, bofeel_end_redirect, parse_order_numbers, submit_prepared, validate_request
 from http_amounts import mark_verified
@@ -77,10 +77,10 @@ class SubmissionTests(unittest.TestCase):
             with self.assertRaises(LoginError):
                 validate_request(vendor, ENDPOINTS[vendor], 'POST', fields, fields, totals_verified=True)
 
-    def test_new_address_and_one_item_are_mandatory(self):
+    def test_new_address_and_unique_cart_bindings_are_mandatory(self):
         value = draft('bofeel')
         for fields in ([('shipping', 'shippingBasic') if k == 'shipping' else (k, v) for k, v in value.fields],
-                       value.fields+[('cartSno[]', 'second')]):
+                       value.fields+[('cartSno[]', values(value.fields, 'cartSno[]')[0])]):
             with self.assertRaises(LoginError):
                 validate_request('bofeel', ENDPOINTS['bofeel'], 'POST', fields, fields, totals_verified=True)
 

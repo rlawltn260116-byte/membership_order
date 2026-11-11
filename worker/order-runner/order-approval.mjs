@@ -3,5 +3,6 @@ export function submissionContent(job) {
   const fields = ["lineNo", "sourceSystem", "orderId", "productName", "option", "quantity", "expectedPrice",
     "recipientName", "recipientPhone", "zipcode", "address", "addressDetail", "memo", "destination",
     "주문번호", "납품처", "납품처전화번호", "품명", "주문수량", "비고(내역)"];
-  return JSON.stringify([String(job.sourceSystem ?? ""), (job.rows ?? []).map((row) => fields.map((key) => String(row[key] ?? "")))]);
+  return JSON.stringify([String(job.sourceSystem ?? ""), String(job.filename ?? job.sourceFile ?? ""), String(job.sourceDate ?? ""),
+    (job.rows ?? []).map((row) => [...fields, "sourceFile", "sourceDate"].map((key) => String(row[key] ?? "")))]);
 }

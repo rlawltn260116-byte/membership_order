@@ -203,10 +203,10 @@ def verify_eroum(session, draft, group, source, objects):
 def verify_bofeel(session, draft, group, source):
     draft.report['submission_ready'] = False
     rows = group['rows']
-    if len(rows) != 1:
-        raise LoginError('최종 금액 검증은 승인된 단일 행만 허용')
-    row = rows[0]; mapping = row['mapping']; fields = draft.fields
-    if type(row['quantity']) is not int or not 1 <= row['quantity'] <= 1000:
+    if not rows or len(rows) > 30:
+        raise LoginError('승인 행 개수 범위 밖')
+    row = rows[0]; fields = draft.fields
+    if any(type(r['quantity']) is not int or not 1 <= r['quantity'] <= 1000 or r['recipient'] != row['recipient'] for r in rows):
         raise LoginError('금액 검증 수량 범위 밖')
     assert_recipient('bofeel', fields, row['recipient'])
     if values(fields, 'reflectApplyDelivery') or values(fields, 'shipping') != ['shippingNew']:
@@ -232,24 +232,41 @@ def verify_bofeel(session, draft, group, source):
     # 이 체크박스에는 name이 없어 실제 serialize에도 포함되지 않는다. 초안 검증 상태에만 동의.
     if values(fields, 'termAgree_orderCheck'):
         raise LoginError('관찰되지 않은 동의 POST 필드')
-    key = 'priceInfo['+mapping['productId']+']['+mapping['optionId']+']'
-    if [k for k, _ in fields if k.startswith('priceInfo[')] != [key]:
+    expected = {}
+    for approved in rows:
+        mapping = approved['mapping']
+        key = 'priceInfo['+mapping['productId']+']['+mapping['optionId']+']'
+        expected.setdefault(key, []).append(approved)
+    price_keys = [k for k, _ in fields if k.startswith('priceInfo[')]
+    if len(price_keys) != len(expected) or set(price_keys) != set(expected):
         raise LoginError('주문서 상품·옵션 연결 불일치')
-    price = json.loads(one(fields, key))
-    if money(price['goodsCnt']) != row['quantity'] or values(fields, 'cartSno[]') != [session.created_row.cart_id]:
+    cart_rows = getattr(session, 'created_rows', None)
+    if not isinstance(cart_rows, list) or not cart_rows: cart_rows = [session.created_row]
+    cart_ids = [r.cart_id for r in cart_rows]
+    from collections import Counter
+    expected_cart = Counter((rs[0]['mapping']['productId'], rs[0]['mapping']['model'], rs[0]['mapping']['optionName'], sum(r['quantity'] for r in rs)) for rs in expected.values())
+    if Counter((r.product_id, r.name, r.option, r.quantity) for r in cart_rows) != expected_cart:
+        raise LoginError('주문서와 승인 장바구니 상품·옵션·수량 불일치')
+    if len(set(cart_ids)) != len(expected) or sorted(values(fields, 'cartSno[]')) != sorted(cart_ids):
         raise LoginError('주문서 수량·장바구니 연결 불일치')
-    unit = money(price['goodsPrice']) + money(price['optionPrice'])
-    expected_price(row, unit)
-    subtotal = unit * row['quantity']
-    if money(price['goodsPriceSum']) + money(price['optionPriceSum']) != subtotal or money(price['goodsPriceSubtotal']) != subtotal:
-        raise LoginError('상품 행 가격 불일치')
-    # 확인하지 않은 할인·추가상품·해외·방문수령 조합은 자동 허용하지 않는다.
-    for key in ('goodsDcPrice','couponGoodsDcPrice','memberDcPrice','memberOverlapDcPrice','addGoodsPriceSum','optionTextPriceSum'):
-        value = price[key]
-        if key == 'memberOverlapDcPrice' and value is None:
-            value = 0  # 현행 JSON의 중복 회원 할인 미적용 표지. 숨은 합계도 아래에서 대조한다.
-        if money(value):
-            raise LoginError('할인·추가상품 계산 미검증')
+    subtotal = 0
+    for key, approved_rows in expected.items():
+        price = json.loads(one(fields, key))
+        quantity = sum(r['quantity'] for r in approved_rows)
+        if money(price['goodsCnt']) != quantity:
+            raise LoginError('주문서 승인 행 전체 수량 불일치')
+        unit = money(price['goodsPrice']) + money(price['optionPrice'])
+        for approved in approved_rows: expected_price(approved, unit)
+        line_total = money(unit * quantity)
+        if (money(price['goodsPriceSum']) != money(price['goodsPrice']) * quantity or
+            money(price['optionPriceSum']) != money(price['optionPrice']) * quantity or
+            money(price['goodsPriceSubtotal']) != line_total):
+            raise LoginError('상품 행 가격 불일치')
+        subtotal = money(subtotal + line_total)
+        for discount in ('goodsDcPrice','couponGoodsDcPrice','memberDcPrice','memberOverlapDcPrice','addGoodsPriceSum','optionTextPriceSum'):
+            value = price[discount]
+            if discount == 'memberOverlapDcPrice' and value is None: value = 0
+            if money(value): raise LoginError('할인·추가상품 계산 미검증')
     for key in ('totalCouponGoodsDcPrice','totalMemberDcPrice','totalMemberOverlapDcPrice','deliveryInsuranceFee','totalCouponOrderDcPrice','totalCouponDeliveryDcPrice'):
         if money(one(fields,key),empty=True):
             raise LoginError('할인·해외 배송 계산 미검증')
@@ -259,7 +276,7 @@ def verify_bofeel(session, draft, group, source):
             display_money(source,'totalSettlePrice') != initial or display_money(source,'totalSettlePriceView') != initial or money(one(fields,'settlePrice')) != initial):
         raise LoginError('서버 화면 합계·초안 불일치')
     fields = replace(fields,'settleKind','gb')
-    area = session.read_amount('/order/cart_ps.php', [('mode','check_area_delivery'), ('cartSno[]',session.created_row.cart_id),
+    area = session.read_amount('/order/cart_ps.php', [('mode','check_area_delivery')] + [('cartSno[]',cart_id) for cart_id in cart_ids] + [
         ('receiverAddress',row['recipient']['address']),('receiverAddressSub',row['recipient']['detail']),
         ('totalCouponOrderDcPrice',one(fields,'totalCouponOrderDcPrice'))])
     if not isinstance(area,dict) or 'areaDelivery' not in area or area.get('error') not in (None,False,0,'0'):

@@ -106,8 +106,9 @@ def validate_request(vendor, url, method, fields, expected_fields, *, totals_ver
             raise LoginError('결제·일반주문 분기 미확인')
         required = ('od_b_name', 'od_b_tel', 'od_b_hp', 'od_b_zip', 'od_b_addr1')
     else:
-        if len(values(fields, 'cartSno[]')) != 1 or one(fields, 'shipping') != 'shippingNew':
-            raise LoginError('직접 입력·단일 장바구니 행 미확인')
+        cart_ids = values(fields, 'cartSno[]')
+        if not 1 <= len(cart_ids) <= 30 or len(set(cart_ids)) != len(cart_ids) or not all(cart_ids) or one(fields, 'shipping') != 'shippingNew':
+            raise LoginError('직접 입력·장바구니 행 집합 미확인')
         if one(fields, 'settleKind') != 'gb' or not one(fields, 'bankAccount').strip() or not one(fields, 'bankSender').strip():
             raise LoginError('무통장 입금·계좌·입금자 미확인')
         required = ('receiverName', 'receiverPhone', 'receiverCellPhone', 'receiverZonecode', 'receiverAddress')

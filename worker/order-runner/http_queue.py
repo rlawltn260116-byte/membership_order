@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import re
 import urllib.parse
 
 from http_cart import (CartRow, Document, OrderDraft, build_order_draft, controls,
@@ -14,6 +15,7 @@ from http_login_draft import LoginError, StopSignalError
 from http_preparation import PreparationSession, eroum_product_fields
 from http_submission import submit_prepared
 from http_amounts import quote_request, verify_eroum, verify_bofeel
+from bofeel_products import product_fields
 
 CATALOG = json.loads((Path(__file__).parent / 'data' / 'b2b-product-map.json').read_text(encoding='utf-8'))
 
@@ -38,6 +40,32 @@ class QueueSession(PreparationSession):
 
     def read_amount(self, path, fields):
         return quote_request(self, path, fields)
+
+    def bofeel_option(self, product_id, selected, mileage):
+        from http_login_draft import check_stop_signal
+        if self.vendor != 'bofeel' or not self.authenticated or not any(p == product_id for p, _ in self.approved_bofeel_items):
+            raise LoginError('옵션 조회 승인 상품 미확인')
+        key = ('option', product_id, tuple(selected))
+        if key in self.read_once or self.catalog_count >= 60 or not 1 <= len(selected) <= 2:
+            raise LoginError('옵션 조회 중복·한도 초과')
+        time.sleep(max(0, 1 - (time.monotonic() - self.catalog_time)))
+        self.catalog_time = time.monotonic(); self.catalog_count += 1; self.read_once.add(key)
+        fields = [('mode', 'option_select'), ('optionKey', str(len(selected)-1)), ('goodsNo', product_id), ('mileageFl', mileage)]
+        fields += [('optionVal[]', value) for value in selected]
+        import urllib.request
+        request = urllib.request.Request(self.origin + '/goods/goods_ps.php', data=urllib.parse.urlencode(fields).encode(),
+            headers={'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest'})
+        with self.opener.open(request, timeout=30) as response:
+            if response.code != 200:
+                raise LoginError('옵션 조회 응답 실패: 재시도 없음')
+            import gzip
+            raw = response.read()
+            if response.headers.get('Content-Encoding', '').lower() == 'gzip': raw = gzip.decompress(raw)
+            text = raw.decode(response.headers.get_content_charset() or 'utf-8', errors='replace')
+            check_stop_signal(text)
+            data = json.loads(text)
+            if not isinstance(data, dict): raise LoginError('옵션 조회 구조 변경')
+            return data
 
     def catalog_object(self, mapping):
         key = mapping['productId']
@@ -139,53 +167,58 @@ def prepare_eroum_group(session, group, source, objects):
     return draft
 
 
-def cleanup_bofeel(session, mapping, quantity):
+def cleanup_bofeel(session, mapping=None, quantity=None):
     session.retained_for_submit = False
     current = session.get_cart()
-    row = current.require_single(mapping['productId'], mapping['model'], quantity)
-    if row != session.created_row:
+    rows = getattr(session, 'created_rows', None) or ([session.created_row] if session.created_row else [])
+    if not rows or sorted(current.rows, key=lambda r:r.cart_id) != sorted(rows, key=lambda r:r.cart_id):
         raise LoginError('장바구니 행 변경: 삭제 중단')
     fields = [(k, v) for k, v in current.fields if k != 'cartSno[]']
-    fields = replace(fields, 'mode', 'cartDelete') + [('cartSno[]', row.cart_id)]
+    fields = replace(fields, 'mode', 'cartDelete') + [('cartSno[]', row.cart_id) for row in rows]
     session._operation('/order/cart_ps.php', fields)
     session.get_cart().require_empty()
     session.created_row = None
+    session.created_rows = []
+    session.approved_bofeel_items = set()
     session.order_path = None
-    session.mutations.discard(('/order/cart_ps.php', 'cartIn'))
-    session.mutations.discard(('/order/cart_ps.php', 'cartDelete'))
+    session.mutations = {key for key in session.mutations if key[0] != '/order/cart_ps.php'}
 
 
 def prepare_bofeel_group(session, group, *, retain_for_submit=False):
     rows = group['rows']
+    if not rows or len(rows) > 30:
+        raise LoginError('보필 승인 행 개수 범위 밖')
     for row in rows:
         check_mapping('bofeel', row)
     first = rows[0]
-    if any(row['mapping'] != first['mapping'] or row['recipient']['memo'] != first['recipient']['memo'] for row in rows):
-        raise LoginError('보필 다품목·상이한 행별 비고는 확인 전 보류')
-    mapping = first['mapping']
-    if mapping['model'] != 'BFSH10' or mapping['optionName'] != '':
-        raise LoginError('보필 동적 옵션 폼은 확인 전 보류')
-    quantity = sum(row['quantity'] for row in rows)
+    if any(row['recipient'] != first['recipient'] for row in rows):
+        raise LoginError('보필 배송지·행별 비고 불일치')
+    items = {}
+    for row in rows:
+        m = row['mapping']; key = (m['productId'], m['optionId'])
+        if key not in items: items[key] = [m, 0]
+        items[key][1] += row['quantity']
     session.get_cart().require_empty()
-    source = session._operation('/goods/goods_view.php?goodsNo=' + mapping['productId'])
-    form = Document(source).form('frmView')
-    fields = serialize(form)
-    if values(fields, 'goodsNo[]') != [mapping['productId']] or values(fields, 'optionSno[]') != [mapping['optionId']] or one(fields, 'optionFl') != 'n':
-        raise LoginError('현재 사이트 상품·기본 옵션 불일치')
-    # 구매불가 표지는 현재 상품 주문 폼 안에서만 확인한다.
-    if any(marker in form.text() for marker in ('품절', '구매불가', '구매 불가', '판매중지', '판매 중지')):
-        raise LoginError('구매 불가·품절 상품')
-    fields = replace(replace(replace(fields, 'mode', 'cartIn'), 'cartMode', ''), 'goodsCnt[]', str(quantity))
-    result = json.loads(session._operation('/order/cart_ps.php', fields))
-    if not isinstance(result, dict) or str(result.get('error', '0')).lower() not in ('0', 'false', 'none', ''):
-        raise LoginError('장바구니 담기 결과 미확인')
-    snapshot = session.get_cart()
-    session.created_row = snapshot.require_single(mapping['productId'], mapping['model'], quantity)
+    session.approved_bofeel_items = set(items)
+    session.created_rows = []
     draft = None
     cleanup = True
     try:
+        expected = []
+        for mapping, quantity in items.values():
+            time.sleep(1)
+            source = session._operation('/goods/goods_view.php?goodsNo=' + mapping['productId'])
+            fields = product_fields(session, source, mapping, quantity)
+            result = json.loads(session._operation('/order/cart_ps.php', fields))
+            if not isinstance(result, dict) or str(result.get('error', '0')).lower() not in ('0', 'false', 'none', ''):
+                raise LoginError('장바구니 담기 결과 미확인')
+            expected.append((mapping['productId'], mapping['model'], mapping['optionName'], quantity))
+            snapshot = session.get_cart()
+            snapshot.require_items(expected)
+            session.created_rows = snapshot.rows.copy()
+            session.created_row = snapshot.rows[0]
         source = session.open_order()
-        draft = build_order_draft('bofeel', source, session.created_row, first['recipient'])
+        draft = build_order_draft('bofeel', source, session.created_rows, first['recipient'])
         if not draft.report['valid']:
             raise LoginError('보필 직접 입력 주문서 대조 실패')
         # 주소 저장·회원 반영 필드는 값이 없어야 한다. 선택된 상태를 보존해 제출하지 않는다.
@@ -214,7 +247,7 @@ def prepare_bofeel_group(session, group, *, retain_for_submit=False):
     finally:
         # PREPARE 종료나 검증 실패 시 이 실행에서 담은 행만 삭제한다.
         if cleanup and session.created_row:
-            cleanup_bofeel(session, mapping, quantity)
+            cleanup_bofeel(session)
 
 
 def emit(value):
@@ -274,16 +307,17 @@ def run(vendor, groups, env, session_factory=QueueSession, execution_mode='PREPA
                 break
         if vendor == 'eroum' and not interrupted:
             session.get_cart().require_empty()
-        submission_ready = (len(groups) == len(drafts) == 1 and len(groups[0]['rows']) == 1 and
+        submission_ready = (len(groups) == len(drafts) == 1 and (vendor == 'bofeel' or len(groups[0]['rows']) == 1) and
                             drafts[0].report.get('submission_ready') is True)
         emit({'event': 'prepared', 'details': details, 'submissionReady': submission_ready,
               'sourceKey': groups[0]['rows'][0]['sourceKey'] if len(groups) == 1 and len(groups[0]['rows']) == 1 else '',
+              'sourceKeys': [r['sourceKey'] for r in groups[0]['rows']] if len(groups) == 1 else [],
               'finalEmpty': not interrupted and session.created_row is None,
               'cartVerified': not interrupted})
         # 금액 검증 뒤에도 부모의 증명·원장·행 잠금 승인이 필요하다.
         if execution_mode == 'SUBMIT' and submission_ready and env.get('ENABLE_B2B_HTTP_SUBMIT') == 'true':
             command = json.loads(sys.stdin.readline(4097) or '{}')
-            if command.get('submit') is True and command.get('sourceKey') == groups[0]['rows'][0]['sourceKey']:
+            if command.get('submit') is True and command.get('sourceKeys', [command.get('sourceKey')]) == [r['sourceKey'] for r in groups[0]['rows']]:
                 result = submit_prepared(session, drafts[0], authorized=True, environ=env)
                 emit({'event': 'submitted', **result})
     finally:

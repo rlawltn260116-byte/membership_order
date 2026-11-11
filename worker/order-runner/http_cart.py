@@ -153,6 +153,13 @@ class CartSnapshot:
             raise LoginError('상품 ID·모델·옵션·수량 대조 실패: 변경 없이 중단')
         return row
 
+    def require_items(self, expected):
+        from collections import Counter
+        actual = Counter((r.product_id, r.name, r.option, r.quantity) for r in self.rows)
+        if not expected or actual != Counter(expected) or len(self.rows) != len(expected):
+            raise LoginError('장바구니 전체 상품·옵션·수량 대조 실패')
+        return self.rows
+
 
 @dataclass(repr=False)
 class OrderDraft:
@@ -199,7 +206,9 @@ def build_order_draft(vendor, html, row, recipient):
         action = urllib.parse.urljoin('/order/order.php', form.attrs.get('action', ''))
         expected_action = '/order/order_ps.php'
         product_required = {'cartSno[]'}
-        product_match = values(defaults, 'cartSno[]') == [row.cart_id]
+        expected_rows = row if isinstance(row, list) else [row]
+        product_match = (sorted(values(defaults, 'cartSno[]')) == sorted(r.cart_id for r in expected_rows) and
+                         len(set(values(defaults, 'cartSno[]'))) == len(expected_rows))
     missing = sorted((set(mapping) | product_required) - names)
     fields = list(defaults)
     for name, source in mapping.items():
@@ -254,8 +263,11 @@ def parse_cart(vendor, html):
             cart_id = a.get('data-ctid', '')
         else:
             product, name = a.get('data-goods-no', ''), a.get('data-goods-nm', '')
+            # 이 모델의 사이트 상품명 뒤에는 입고 예정 안내가 붙는다. 모델 표기만 분리한다.
+            name = re.sub(r'^(동행\(sk-130\))\s+\[.*$', r'\1', name)
             quantity = positive_int(a.get('data-default-goods-cnt', ''))
-            option = normal(a.get('data-option-nm', ''))
+            option = ' / '.join(re.sub(r'\s*\(개당\s*:?.*$', '', part).strip()
+                                for part in normal(a.get('data-option-nm', '')).split(' / '))
             cart_id = a.get('value', '')
             displays = [n.text() for n in tr.all('strong') if n.parent and n.parent.has_class('order_goods_num')]
             if displays != [str(quantity) + '개']:
@@ -293,6 +305,8 @@ class CartSession(VendorHttpSession):
         self.cart_html = ''
         self.mutations = set()
         self.order_path = None
+        self.created_rows = []
+        self.approved_bofeel_items = set()
 
     def request(self, path, fields=None):
         text = super().request(path, fields)
@@ -320,7 +334,8 @@ class CartSession(VendorHttpSession):
         item_path = ('/shop/item.php?it_id=' if self.vendor == 'eroum' else '/goods/goods_view.php?goodsNo=') + product
         order_path = self.order_path
         if fields is None:
-            if path not in (item_path, order_path):
+            scoped_item = (self.vendor == 'bofeel' and any(path == '/goods/goods_view.php?goodsNo=' + p for p, _ in self.approved_bofeel_items))
+            if path not in (item_path, order_path) and not scoped_item:
                 raise LoginError('허용 GET 범위 밖 요청')
         else:
             if self.vendor == 'eroum':
@@ -342,10 +357,13 @@ class CartSession(VendorHttpSession):
             elif path == '/order/cart_ps.php':
                 mode = one(fields, 'mode')
                 if mode == 'cartIn':
-                    if one(fields, 'cartMode') != '' or values(fields, 'goodsNo[]') != [product]:
+                    permitted = self.approved_bofeel_items or {(product, '31')}
+                    if (one(fields, 'cartMode') != '' or len(values(fields, 'goodsNo[]')) != 1 or len(values(fields, 'optionSno[]')) != 1 or
+                            (one(fields, 'goodsNo[]'), one(fields, 'optionSno[]')) not in permitted):
                         raise LoginError('담기 payload 범위 밖 요청')
                 elif mode == 'cartDelete':
-                    if not self.created_row or values(fields, 'cartSno[]') != [self.created_row.cart_id]:
+                    rows = self.created_rows or ([self.created_row] if self.created_row else [])
+                    if not rows or sorted(values(fields, 'cartSno[]')) != sorted(r.cart_id for r in rows):
                         raise LoginError('삭제 대상 불일치')
                 else:
                     raise LoginError('허용 mode 범위 밖 요청')
@@ -354,6 +372,8 @@ class CartSession(VendorHttpSession):
             # 요청 전에 예약한다. 응답 유실 후 같은 변경을 재전송하지 않는다.
             key = (path, one(fields, 'act') if self.vendor == 'eroum' and path.endswith('cartupdate.php')
                    else one(fields, 'mode') if self.vendor == 'bofeel' else 'add')
+            if self.vendor == 'bofeel' and one(fields, 'mode') == 'cartIn':
+                key += (one(fields, 'goodsNo[]'), one(fields, 'optionSno[]'))
             if key in self.mutations:
                 raise LoginError('동일 변경 자동 재전송 금지')
             self.mutations.add(key)
@@ -476,3 +496,5 @@ class CartSession(VendorHttpSession):
         self.cart_html = ''
         self.created_row = None
         self.order_path = None
+        self.created_rows.clear()
+        self.approved_bofeel_items.clear()

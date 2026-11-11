@@ -58,11 +58,13 @@ export async function runQueueVendor(vendor, groups, { env = process.env, spawn 
           const valid = details.length === expected.length && details.every((d) => expected.includes(d.lineNo) && ["READY", "HOLD", "FAILED"].includes(d.status) && typeof d.reason === "string") && new Set(details.map((d) => d.lineNo)).size === details.length;
           prepared = { details: valid ? details.map(safeDetail) : [], submissionReady: valid && details.every((d) => d.status === "READY") && event.cartVerified === true && event.submissionReady === true,
             sourceKey: typeof event.sourceKey === "string" ? event.sourceKey : "", reason: "HTTP 준비를 완료하지 못했습니다." };
+          if (Array.isArray(event.sourceKeys)) prepared.sourceKeys = event.sourceKeys;
           handling = (async () => {
             if (onPrepared) {
               prepared.submission = await onPrepared(prepared, async () => await new Promise((done) => {
                 submitted = done;
-                child.stdin.write(JSON.stringify({ submit: true, sourceKey: prepared.sourceKey }) + "\n");
+                child.stdin.write(JSON.stringify({ submit: true, sourceKey: prepared.sourceKey,
+                  ...(prepared.sourceKeys ? { sourceKeys: prepared.sourceKeys } : {}) }) + "\n");
               }));
             }
             child.stdin.end();
@@ -100,7 +102,7 @@ export async function prepareHttpJob(job, { env = process.env, runVendor = runQu
       }
       details.push(detail);
     }
-    canSubmit = plan.rows.length === 1 && result.submissionReady === true && env.ENABLE_B2B_HTTP_SUBMIT === "true";
+    canSubmit = plan.groups.length === 1 && plan.rows.every(row => row.status === "READY") && result.submissionReady === true && env.ENABLE_B2B_HTTP_SUBMIT === "true";
   }
   return { details: details.sort((a, b) => a.lineNo - b.lineNo), canSubmit };
 }

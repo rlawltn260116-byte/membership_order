@@ -1,6 +1,7 @@
 "use client";
 
 import { submissionContent } from "../worker/order-runner/order-approval.mjs";
+import { splitDestination } from "../worker/order-runner/b2b-destination.mjs";
 
 import { orderChannelGroups, normalizeChannelName, nextPreparation, scheduleLabel } from "../worker/order-runner/schedule.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -182,7 +183,6 @@ type PageMode =
   | "settings";
 
 const requiredColumns = [
-  "order_id",
   "category",
   "product_name",
   "quantity",
@@ -301,7 +301,7 @@ function parseGenericWorkbookRows(matrix: unknown[][]) {
     .filter((row) => Object.entries(row).some(([key, value]) => key !== "__line_no" && workbookText(value)));
 }
 
-function parseThkcWorkbookRows(matrix: unknown[][]) {
+function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum") {
   const headerBlocks = new Map<number, Record<string, number>>();
   matrix.slice(0, 25).forEach((row, rowIndex) => {
     const mapping: Record<string, number> = {};
@@ -332,18 +332,21 @@ function parseThkcWorkbookRows(matrix: unknown[][]) {
     const quantity = value("quantity");
     const memo = value("memo");
     if (![orderId, destination, phone, product, quantity].some(Boolean)) return;
-    const { address, recipientName } = splitThkcDestination(destination);
+    const parsedDestination = vendor === "bofeel" ? splitDestination(destination, vendor) : null;
+    const { address, recipientName } = vendor === "bofeel"
+      ? { address: parsedDestination?.address ?? destination, recipientName: parsedDestination?.name ?? "" }
+      : splitThkcDestination(destination);
     const splitProduct = splitThkcProduct(product);
     parsed.push({
       __line_no: rowIndex + 1,
-      source_system: "이로움",
+      source_system: vendor === "bofeel" ? "보필" : "이로움",
       order_id: orderId,
       category: "급여판매",
       product_name: splitProduct.productName,
       option: splitProduct.option,
       quantity,
       expected_price: "",
-      customer_name: "티에이치케이컴퍼니",
+      customer_name: vendor === "bofeel" ? "보필" : "티에이치케이컴퍼니",
       recipient_name: recipientName,
       recipient_phone: phone,
       zipcode: "",
@@ -371,7 +374,7 @@ async function parseXlsx(file: File) {
     }
     matrix.push(values);
   }
-  const rows = parseThkcWorkbookRows(matrix);
+  const rows = parseThkcWorkbookRows(matrix, /보필/.test(file.name) ? "bofeel" : "eroum");
   const parsed = rows.length ? rows : parseGenericWorkbookRows(matrix);
   if (!parsed.length) {
     throw new Error("지원되는 주문 열을 찾지 못했습니다. THKC 발주서 또는 주문 엑셀 양식을 확인해 주세요.");
@@ -930,7 +933,7 @@ export default function OrderOpsApp() {
   async function queueFinalSubmission(approvalCode: string) {
     if (!activeJob?.report || activeJob.status !== "REVIEWED" || activeJob.dashboardReview?.decision !== "ACCEPTED") return;
     if (activeJob.report.failedRows > 0 || activeJob.report.holdRows > 0 || activeJob.report.successRows !== activeJob.report.totalRows) return;
-    if (!activeJob.report.canSubmit || activeJob.report.totalRows !== 1) return;
+    if (!activeJob.report.canSubmit || (activeJob.report.totalRows !== 1 && !(activeJob.sourceSystem === "보필" && activeJob.report.transport === "HTTP"))) return;
     setLoading(true);
     const approvedAt = new Date().toISOString();
     const requestId = window.crypto.randomUUID();
@@ -1263,7 +1266,7 @@ function WorkerReviewPanel({
     review?.decision === "ACCEPTED" &&
     report.canSubmit === true &&
     reportIsFresh &&
-    report.totalRows === 1 &&
+    (report.totalRows === 1 || (job.sourceSystem === "보필" && report.transport === "HTTP")) &&
     report.successRows === report.totalRows &&
     report.failedRows === 0 &&
     report.holdRows === 0;
@@ -1446,7 +1449,7 @@ function WorkerReviewPanel({
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-slate-700">
           {job.status === "REVIEWED" && (!report.canSubmit || !reportIsFresh)
             ? "주문 확정 전 최신 서버 검증이 필요합니다. 서버 준비 요청을 다시 실행한 뒤 새 결과를 검토해 주세요."
-            : "검토 수락은 서버 준비 결과를 확인했다는 기록입니다. 성공한 1행 작업 전체를 수락하면 실제 주문 확정 버튼이 표시됩니다."}
+            : "검토 수락은 서버 준비 결과를 확인했다는 기록입니다. 같은 배송지 주문의 모든 상품이 검증되면 실제 주문 확정 버튼이 표시됩니다."}
         </div>
       )}
     </div>
