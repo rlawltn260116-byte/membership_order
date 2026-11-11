@@ -1,5 +1,7 @@
 "use client";
 
+import { submissionContent } from "../worker/order-runner/order-approval.mjs";
+
 import { orderChannelGroups, normalizeChannelName, nextPreparation, scheduleLabel } from "../worker/order-runner/schedule.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -106,6 +108,7 @@ type Job = {
     shippingNoticeRows?: number;
     reviewState: "WAITING_FOR_DASHBOARD" | "BLOCKED" | "COMPLETED";
     canSubmit: boolean;
+    transport?: "HTTP" | "Playwright";
     submittedRows?: number;
     details: Array<{
       lineNo: number;
@@ -119,6 +122,10 @@ type Job = {
       shippingNotes?: string[];
       orderNumber?: string;
       submittedAt?: string;
+      vendor?: string;
+      orderGroup?: number;
+      addressMode?: string;
+      submissionReady?: boolean;
     }>;
   };
   dashboardReview?: {
@@ -132,6 +139,8 @@ type Job = {
     finalSubmissionApprovedAt?: string;
     submissionRequestId?: string;
     approvalProof?: string;
+    contentApprovalProof?: string;
+    reviewedFromStatus?: string;
   };
   dashboardApproval?: {
     approved: boolean;
@@ -921,6 +930,7 @@ export default function OrderOpsApp() {
   async function queueFinalSubmission(approvalCode: string) {
     if (!activeJob?.report || activeJob.status !== "REVIEWED" || activeJob.dashboardReview?.decision !== "ACCEPTED") return;
     if (activeJob.report.failedRows > 0 || activeJob.report.holdRows > 0 || activeJob.report.successRows !== activeJob.report.totalRows) return;
+    if (!activeJob.report.canSubmit || activeJob.report.totalRows !== 1) return;
     setLoading(true);
     const approvedAt = new Date().toISOString();
     const requestId = window.crypto.randomUUID();
@@ -929,6 +939,9 @@ export default function OrderOpsApp() {
       const proofBytes = new TextEncoder().encode(`${activeJob.id}:${requestId}:${approvalCode}`);
       const proofBuffer = await window.crypto.subtle.digest("SHA-256", proofBytes);
       const approvalProof = Array.from(new Uint8Array(proofBuffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const contentBytes = new TextEncoder().encode(`${activeJob.id}:${requestId}:${submissionContent(activeJob)}:${approvalCode}`);
+      const contentBuffer = await window.crypto.subtle.digest("SHA-256", contentBytes);
+      const contentApprovalProof = Array.from(new Uint8Array(contentBuffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
       await updateOrderJob(activeJob.id, {
         status: "SUBMIT_QUEUED",
         executionMode: "SUBMIT",
@@ -937,9 +950,11 @@ export default function OrderOpsApp() {
           state: "FINAL_SUBMISSION_APPROVED",
           required: false,
           finalSubmissionApproved: true,
+          reviewedFromStatus: "REVIEWED",
           finalSubmissionApprovedAt: approvedAt,
           submissionRequestId: requestId,
           approvalProof,
+          contentApprovalProof,
           updatedAt: approvedAt,
         },
         [`auditLogs/${auditId}`]: {
@@ -948,12 +963,12 @@ export default function OrderOpsApp() {
           action: "FINAL_SUBMISSION_APPROVED",
           actorName: "주문 운영자",
           actorEmail: "",
-          detail: `이로움 실제 주문 확정 ${activeJob.report.totalRows}건을 승인했습니다. 요청번호 ${requestId}`,
+          detail: `${activeJob.sourceSystem} 실제 주문 확정 ${activeJob.report.totalRows}건을 승인했습니다. 요청번호 ${requestId}`,
           createdAt: approvedAt,
         },
         updatedAt: approvedAt,
       });
-      setMessage("실제 주문 확정 요청을 등록했습니다. 서버가 배송정보를 다시 검증한 뒤 이로움 주문을 제출합니다.");
+      setMessage("실제 주문 확정 요청을 등록했습니다. 서버가 상품과 배송정보 및 제출 잠금을 다시 검증합니다.");
       await loadJobs();
       await openJob(activeJob.id);
     } catch (error) {
@@ -1311,9 +1326,10 @@ function WorkerReviewPanel({
           <div>
             <h3 className="font-semibold">서버 처리 상세</h3>
             <p className="mt-1 text-sm text-slate-600">실행기 {report.workerId} · 시작 {formatDateTime(report.startedAt)} · 종료 {formatDateTime(report.finishedAt)}</p>
+            {report.transport === "HTTP" ? <p className="mt-2 text-sm text-amber-900">{job.sourceSystem} HTTP 준비 결과 · 배송지는 신규 입력 · 최종 금액·결제 검증 전에는 제출 잠금</p> : null}
             <p className="mt-1 text-sm text-slate-700">
               {submissionCompleted
-                ? `이로움 주문 제출 완료${report.submittedRows ? ` · ${report.submittedRows}건` : ""}`
+                ? `${job.sourceSystem} 주문 제출 완료${report.submittedRows ? ` · ${report.submittedRows}건` : ""}`
                 : submissionInProgress
                   ? "운영자가 승인한 실제 주문 확정을 서버가 처리하고 있습니다."
                   : "서버는 아직 주문을 제출하지 않았습니다. 검토 수락 후 아래 주문 확정 버튼으로 별도 승인합니다."}
@@ -1352,6 +1368,7 @@ function WorkerReviewPanel({
                     <TableCell><Badge className={statusClass(detail.status)}>{statusLabel(detail.status)}</Badge></TableCell>
                     <TableCell className="whitespace-normal">
                       {detail.reason}
+                      {report.transport === "HTTP" && detail.orderGroup ? <div className="mt-1 text-xs text-slate-500">{detail.vendor === "bofeel" ? "보필" : "이로움"} · 배송지 묶음 {detail.orderGroup} · {detail.addressMode === "shippingNew" ? "직접 입력" : "신규 배송지"} · 상품 {detail.productId}</div> : null}
                       {detail.orderNumber ? <div className="mt-1 font-semibold text-emerald-700">주문번호 {detail.orderNumber}</div> : null}
                       {detail.submittedAt ? <div className="mt-1 text-xs text-slate-500">제출 {formatDateTime(detail.submittedAt)}</div> : null}
                     </TableCell>
@@ -1372,7 +1389,7 @@ function WorkerReviewPanel({
           <div>
             <h3 className="font-semibold text-rose-950">실제 주문 확정</h3>
             <p className="mt-1 text-sm leading-6 text-rose-900/80">
-              누르면 서버가 상품과 배송정보를 다시 검증한 뒤 이로움에 실제 주문을 제출합니다.
+              누르면 서버가 상품과 배송정보를 다시 검증한 뒤 {job.sourceSystem}에 실제 주문을 제출합니다.
             </p>
           </div>
           <AlertDialog>
@@ -1384,9 +1401,9 @@ function WorkerReviewPanel({
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>이로움 주문 {report.totalRows}건을 실제로 확정할까요?</AlertDialogTitle>
+                <AlertDialogTitle>{job.sourceSystem} 주문 {report.totalRows}건을 실제로 확정할까요?</AlertDialogTitle>
                 <AlertDialogDescription className="leading-6">
-                  확인을 누르면 서버가 이로움의 최종 주문하기 버튼을 실행합니다. 주문번호가 생성된 뒤에는 이 페이지에서 자동 취소되지 않습니다.
+                  확인을 누르면 서버가 제출 잠금과 일회성 승인을 검증한 뒤 최종 주문 요청을 실행합니다. 주문번호가 생성된 뒤에는 이 페이지에서 자동 취소되지 않습니다.
                 </AlertDialogDescription>
                 <div className="mt-3 w-full">
                   <label className="text-sm font-medium text-slate-900" htmlFor="final-approval-code">최종 승인 코드</label>

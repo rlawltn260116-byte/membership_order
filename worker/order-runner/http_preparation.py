@@ -85,14 +85,21 @@ def product_object(data):
     return None
 
 
-def eroum_product_fields(source, obj):
+def eroum_product_fields(source, obj, *, product_id=None, quantity=1, memo=''):
     """저장된 select_item의 기본 옵션 1개 분기만 재현한다. 단가·필드는 메모리에만 둔다."""
-    if obj.get('it_id') != PRODUCTS['eroum'][0] or obj.get('options') != []:
+    if obj.get('it_id') != (product_id or PRODUCTS['eroum'][0]) or obj.get('options') != []:
         raise LoginError('승인 상품·기본 옵션 미확인')
-    if obj.get('stock_status') in ('soldout', 'temp_soldout'):
-        raise LoginError('품절 상품 중단')
+    if obj.get('stock_status') not in ('normal', 'available'):
+        raise LoginError('품절 또는 구매 가능 상태 미확인')
     if str(obj.get('it_buy_inc_qty')) != '1':
         raise LoginError('증가 수량 1 미확인')
+    if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity < 1:
+        raise LoginError('양의 정수 수량 미확인')
+    for key, check in (('it_buy_min_qty', lambda limit: quantity >= limit),
+                       ('it_buy_max_qty', lambda limit: limit == 0 or quantity <= limit)):
+        value = str(obj.get(key, ''))
+        if not re.fullmatch(r'\d+', value) or not check(int(value)):
+            raise LoginError('최소·최대 구매 수량 범위 밖')
     if obj.get('io_type') not in (None, '', '0'):
         raise LoginError('기본 상품 유형 아님')
     # 소스의 hidden input 순서와 중복 it_price[]를 그대로 보존한다.
@@ -127,7 +134,7 @@ def eroum_product_fields(source, obj):
                **{k: obj.get(k) or '' for k in ('ca_id', 'ca_id2', 'ca_id3')}}
     fields = [(key + '[]', js_string(derived[key] if key in derived else obj[key])
                if key in derived or key in obj else 'undefined') for key in keys]
-    fields += [('io_id[]', ''), ('prodMemo[]', ''), ('ct_qty[]', '1'), ('ct_price[]', str(int(str(obj['it_price']))))]
+    fields += [('io_id[]', ''), ('prodMemo[]', memo), ('ct_qty[]', str(quantity)), ('ct_price[]', str(int(str(obj['it_price']))))]
     return fields
 
 

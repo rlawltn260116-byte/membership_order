@@ -3,6 +3,9 @@ import { cert, initializeApp } from "firebase-admin/app";
 import { getDatabase } from "firebase-admin/database";
 import { chromium, type Browser, type Page } from "playwright";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { prepareHttpJob } from "../b2b-queue.mjs";
+import { sourceRowKey, publicLedgerRowKey } from "../b2b-orders.mjs";
+import { submissionContent } from "../order-approval.mjs";
 
 type RowStatus = "READY" | "HOLD" | "FAILED";
 
@@ -32,6 +35,7 @@ type OrderJob = {
   sourceSystem?: string;
   status?: string;
   executionMode?: ExecutionMode;
+  claimedFromStatus?: string;
   rows?: OrderRow[];
   dashboardReview?: {
     decision?: "ACCEPTED" | "ON_HOLD";
@@ -39,6 +43,8 @@ type OrderJob = {
     finalSubmissionApprovedAt?: string;
     submissionRequestId?: string;
     approvalProof?: string;
+    contentApprovalProof?: string;
+    reviewedFromStatus?: string;
   };
 };
 
@@ -55,6 +61,10 @@ type WorkerDetail = {
   shippingNotes?: string[];
   orderNumber?: string;
   submittedAt?: string;
+  vendor?: string;
+  orderGroup?: number;
+  addressMode?: string;
+  submissionReady?: boolean;
 };
 
 type WorkerReport = {
@@ -70,6 +80,7 @@ type WorkerReport = {
   reviewState: "WAITING_FOR_DASHBOARD" | "BLOCKED" | "COMPLETED";
   canSubmit: boolean;
   details: WorkerDetail[];
+  transport?: "HTTP" | "Playwright";
 };
 
 type ProductMapping = { model: string; productId: string; option?: string };
@@ -114,21 +125,22 @@ const queuePath = process.env.FIREBASE_QUEUE_PATH || "order-ops/jobs";
 const workerId = process.env.WORKER_ID || `web-worker-${randomUUID()}`;
 const now = () => new Date().toISOString();
 
-async function claimJob(jobId: string): Promise<OrderJob | null> {
+async function claimJob(jobId: string, canClaim: (job: OrderJob) => boolean = () => true): Promise<OrderJob | null> {
   let claimed: OrderJob | null = null;
-  await database.ref(`${queuePath}/${jobId}`).transaction((value) => {
+  const result = await database.ref(`${queuePath}/${jobId}`).transaction((value) => {
     // First invocation may see an empty local cache (null). Returning null makes
     // Firebase retry with the real server value instead of aborting the claim.
     if (value === null) return value;
     const current = value as OrderJob | null;
     if (!current || !["QUEUED", "SUBMIT_QUEUED"].includes(current.status ?? "")) return;
+    if (!canClaim(current)) return;
     if (current.scheduledPreparation && process.env.ENABLE_ORDER_PREPARATION_SCHEDULING !== "true") return;
     if (current.status === "QUEUED" && !preparationDue(current, new Date(), process.env.ENABLE_ORDER_PREPARATION_SCHEDULING === "true")) return;
     const executionMode: ExecutionMode = current.status === "SUBMIT_QUEUED" ? "SUBMIT" : "PREPARE";
-    claimed = { ...current, id: jobId, status: "RUNNING", executionMode };
+    claimed = { ...current, id: jobId, status: "RUNNING", claimedFromStatus: current.status, executionMode };
     return claimed;
   }, undefined, false);
-  return claimed;
+  return result.committed ? claimed : null;
 }
 
 const colorAliases: Record<string, string[]> = {
@@ -350,12 +362,15 @@ async function reserveSubmission(jobId: string, lineNo: number): Promise<{ reser
     reserved = true;
     return { state: "SUBMITTING", attemptId, startedAt } satisfies SubmissionRowState;
   }, undefined, false);
+  reserved = result.committed;
   const value = result.snapshot.val() as SubmissionRowState | null;
   if (!value) throw new Error("주문 제출 잠금 상태를 저장하지 못했습니다.");
   return { reserved, value };
 }
 
-async function reserveTrustedSubmissionRequest(requestId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+async function reserveTrustedSubmissionRequest(requestId: string, sourceKey?: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const ledgerKey = process.env.B2B_SUBMISSION_LEDGER_KEY ?? "";
+  if (sourceKey && ledgerKey.length < 32) return { ok: false, reason: "원본 행 중복 방지용 고정 비밀 키가 필요합니다." };
   const token = process.env.GITHUB_TOKEN ?? "";
   const repository = process.env.GITHUB_REPOSITORY ?? "";
   if (!token || !repository) return { ok: false, reason: "서버의 중복 주문 방지 저장소가 설정되지 않았습니다." };
@@ -377,22 +392,25 @@ async function reserveTrustedSubmissionRequest(requestId: string): Promise<{ ok:
     try {
       const decoded = Buffer.from((payload.content ?? "").replace(/\s/g, ""), "base64").toString("utf8");
       const parsed = JSON.parse(decoded || "[]") as unknown;
-      used = Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+      if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string") || !sha) throw new Error("원장 형식 오류");
+      used = parsed;
     } catch {
       return { ok: false, reason: "서버의 중복 주문 방지 기록 형식이 올바르지 않습니다." };
     }
   } else if (existing.status !== 404) {
     return { ok: false, reason: `서버의 중복 주문 방지 기록을 읽지 못했습니다 (${existing.status}).` };
   }
-  if (used.includes(requestId)) {
+  const rowKey = sourceKey ? publicLedgerRowKey(sourceKey, ledgerKey) : "";
+  if (used.includes(requestId) || (rowKey && used.includes(rowKey))) {
     return { ok: false, reason: "이미 사용된 최종 승인 요청입니다. 중복 주문 방지를 위해 다시 제출하지 않았습니다." };
   }
-  const value = `${JSON.stringify([...used.slice(-499), requestId], null, 2)}\n`;
+  // 원본 행 키는 승인 요청번호나 큐 작업 ID가 바뀌어도 남아야 한다. 오래된 원장도 지우지 않는다.
+  const value = `${JSON.stringify([...used, requestId, ...(rowKey ? [rowKey] : [])], null, 2)}\n`;
   const saved = await fetch(baseUrl, {
     method: "PUT",
     headers,
     body: JSON.stringify({
-      message: `Reserve order submission ${requestId}`,
+      message: "주문 제출 일회성 원장 예약",
       content: Buffer.from(value, "utf8").toString("base64"),
       branch: "main",
       ...(sha ? { sha } : {}),
@@ -402,7 +420,7 @@ async function reserveTrustedSubmissionRequest(requestId: string): Promise<{ ok:
   return { ok: true };
 }
 
-async function submitEroumOrder(page: Page, jobId: string, lineNo: number, requestId: string): Promise<{ ok: true; orderNumber: string; submittedAt: string } | { ok: false; reason: string }> {
+async function submitEroumOrder(page: Page, jobId: string, lineNo: number, requestId: string, sourceKey: string): Promise<{ ok: true; orderNumber: string; submittedAt: string } | { ok: false; reason: string }> {
   const form = page.locator("#simple_order");
   const candidates = form.locator('button[type="submit"]:visible, input[type="submit"]:visible');
   let finalButton = candidates.nth(-1);
@@ -418,7 +436,7 @@ async function submitEroumOrder(page: Page, jobId: string, lineNo: number, reque
     return { ok: false, reason: "이로움 주문서에서 최종 주문 버튼을 찾지 못했습니다. 실제 주문은 실행하지 않았습니다." };
   }
 
-  const trustedReservation = await reserveTrustedSubmissionRequest(requestId);
+  const trustedReservation = await reserveTrustedSubmissionRequest(requestId, sourceKey);
   if (!trustedReservation.ok) return trustedReservation;
   const reservation = await reserveSubmission(jobId, lineNo);
   if (!reservation.reserved) {
@@ -466,6 +484,9 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number, jobId: 
   if (row.status !== "READY") {
     return { lineNo, status: "HOLD", reason: row.reason || "대시보드 검증에서 확인 대상으로 분류되었습니다." };
   }
+  if (!/^SO\d{10}$/.test(row.orderId ?? "")) {
+    return { lineNo, status: "HOLD", reason: "고객 주문 식별자가 없거나 지점·재고 주문 후보입니다. 원본 확인 전에는 준비·제출하지 않습니다." };
+  }
 
   const mapping = findProductMapping(row.productName);
   if (!mapping) return { lineNo, status: "HOLD", reason: "이로움 상품 코드 매핑을 찾지 못했습니다." };
@@ -512,7 +533,7 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number, jobId: 
   await setReadonlyInput(page, "#od_b_zip", row.zipcode);
   await setReadonlyInput(page, "#od_b_addr1", row.address);
   await setReadonlyInput(page, "#od_b_addr2", row.addressDetail ?? "");
-  await page.locator("#od_memo").fill(row.memo || row.orderId || "");
+  await page.locator("#od_memo").fill(row.memo || "");
 
   const formValid = await page.locator("#simple_order").evaluate((form) => (form as HTMLFormElement).checkValidity());
   if (!formValid) return { lineNo, status: "HOLD", reason: "이로움 주문서 필수 입력값 검증을 통과하지 못했습니다.", productId: mapping.productId, unitPrice, quantity, orderFormUrl: page.url() };
@@ -536,7 +557,7 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number, jobId: 
   };
   if (!submitApproved) return preparedDetail;
 
-  const submitted = await submitEroumOrder(page, jobId, lineNo, submissionRequestId);
+  const submitted = await submitEroumOrder(page, jobId, lineNo, submissionRequestId, sourceRowKey("eroum", row));
   if (!submitted.ok) {
     return { ...preparedDetail, status: "HOLD", reason: submitted.reason };
   }
@@ -548,7 +569,12 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number, jobId: 
   };
 }
 
-async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerReport> {
+function usesHttp(job: OrderJob): boolean {
+  return process.env.B2B_ORDER_TRANSPORT === "http" || job.sourceSystem === "보필" ||
+    Boolean(job.rows?.length && job.rows.every((row) => row.sourceSystem === "보필"));
+}
+
+async function prepareReport(job: OrderJob, browser: Browser | null): Promise<WorkerReport> {
   const startedAt = now();
   const rows = job.rows ?? [];
   const submitMode = job.executionMode === "SUBMIT";
@@ -557,21 +583,30 @@ async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerRep
   const expectedProof = createHash("sha256").update(approvalMaterial).digest("hex");
   const suppliedProof = job.dashboardReview?.approvalProof ?? "";
   const finalApprovedAt = Date.parse(job.dashboardReview?.finalSubmissionApprovedAt ?? "");
-  const finalApprovalFresh = Number.isFinite(finalApprovedAt) && Date.now() - finalApprovedAt <= 30 * 60 * 1000;
+  const finalApprovalFresh = Number.isFinite(finalApprovedAt) && Date.now() >= finalApprovedAt && Date.now() - finalApprovedAt <= 30 * 60 * 1000;
   const approvalProofValid =
     expectedProof.length === suppliedProof.length &&
     timingSafeEqual(Buffer.from(expectedProof), Buffer.from(suppliedProof));
+  const expectedContentProof = createHash("sha256").update(`${job.id}:${job.dashboardReview?.submissionRequestId ?? ""}:${submissionContent(job)}:${approvalKey}`).digest("hex");
+  const suppliedContentProof = job.dashboardReview?.contentApprovalProof ?? "";
+  const contentProofValid = /^[a-f0-9]{64}$/.test(suppliedContentProof) &&
+    timingSafeEqual(Buffer.from(expectedContentProof), Buffer.from(suppliedContentProof));
   const submitApproved =
     submitMode &&
+    job.claimedFromStatus === "SUBMIT_QUEUED" &&
+    job.dashboardReview?.reviewedFromStatus === "REVIEWED" &&
     rows.length === 1 &&
     approvalKey.length >= 12 &&
     approvalProofValid &&
+    contentProofValid &&
     job.dashboardReview?.decision === "ACCEPTED" &&
     job.dashboardReview?.finalSubmissionApproved === true &&
     finalApprovalFresh &&
     Boolean(job.dashboardReview?.submissionRequestId);
   const serialized = process.env.EROUM_STORAGE_STATE_JSON;
   const details: WorkerDetail[] = [];
+  const httpMode = usesHttp(job);
+  let httpCanSubmit = false;
 
   const scheduleProblem = !submitMode ? reservationProblem(job) : null;
   if (scheduleProblem) {
@@ -581,13 +616,21 @@ async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerRep
       ? "현재 실제 주문 확정은 안전 검증을 위해 한 번에 1행만 지원합니다. 주문을 나눠서 처리해 주세요."
       : approvalKey.length < 12
         ? "서버에 최종 주문 승인 코드가 설정되지 않았습니다."
-        : !approvalProofValid
-          ? "최종 승인 코드가 올바르지 않습니다. 실제 주문은 실행하지 않았습니다."
+        : !approvalProofValid || !contentProofValid
+          ? "최종 승인 코드 또는 승인한 주문 행 내용이 일치하지 않습니다. 실제 주문은 실행하지 않았습니다."
           : !finalApprovalFresh
             ? "최종 주문 승인이 30분을 지나 만료되었습니다. 최신 준비 결과를 다시 확인해 주세요."
           : "운영 페이지의 검토 수락과 최종 주문 확정 승인을 모두 확인하지 못했습니다.";
     for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason });
-  } else if (!serialized) {
+  } else if (httpMode) {
+    const result = await prepareHttpJob(job, {
+      reserveLedger: async (requestId, sourceKey) => (await reserveTrustedSubmissionRequest(requestId, sourceKey)).ok,
+      lockRow: async (lineNo) => (await reserveSubmission(job.id, lineNo)).reserved,
+      record: async (lineNo, value) => { await database.ref(`${queuePath}/${job.id}/submission/rows/${lineNo}`).update(value); },
+    });
+    details.push(...result.details);
+    httpCanSubmit = result.canSubmit;
+  } else if (!serialized || !browser) {
     for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason: "서버에 이로움 로그인 세션이 설정되지 않았습니다." });
   } else {
     let storageState: NonNullable<Parameters<Browser["newContext"]>[0]>["storageState"];
@@ -636,7 +679,8 @@ async function prepareReport(job: OrderJob, browser: Browser): Promise<WorkerRep
     shippingNoticeRows,
     submittedRows,
     reviewState: failedRows || holdRows ? "BLOCKED" : completed ? "COMPLETED" : "WAITING_FOR_DASHBOARD",
-    canSubmit: !submitMode && rows.length === 1 && successRows === rows.length && failedRows === 0 && holdRows === 0,
+    canSubmit: !submitMode && rows.length === 1 && successRows === rows.length && failedRows === 0 && holdRows === 0 && (!httpMode || httpCanSubmit),
+    transport: httpMode ? "HTTP" : "Playwright",
     details,
   };
 }
@@ -656,15 +700,23 @@ async function runOnce() {
     return;
   }
 
-  const browser = await chromium.launch({ headless: true });
+  let browser: Browser | null = null;
+  let submittedJobAttempted = false;
+  let httpJobAttempted = false;
   try {
     for (const jobId of queuedIds.slice(0, 10)) {
-      const job = await claimJob(jobId);
+      const job = await claimJob(jobId, (candidate) =>
+        !(candidate.status === "SUBMIT_QUEUED" && submittedJobAttempted) && !(usesHttp(candidate) && httpJobAttempted));
       if (!job) {
-        console.log(`::warning title=주문 워커::작업 ${jobId} 선점에 실패했습니다 (다른 워커가 처리 중이거나 상태가 바뀜).`);
+        console.log(`::notice title=주문 워커::작업 ${jobId}은 이번 실행 한도 또는 상태 변경으로 선점하지 않았습니다.`);
         continue;
       }
       try {
+        // 제출은 한 실행에서 작업 하나만 시도한다. HTTP 로그인도 업체당 실행 한 번을 넘기지 않는다.
+        if (job.executionMode === "SUBMIT") submittedJobAttempted = true;
+        if (usesHttp(job)) {
+          httpJobAttempted = true;
+        } else if (!browser) browser = await chromium.launch({ headless: true });
         const report = await prepareReport(job, browser);
         const submitMode = job.executionMode === "SUBMIT";
         const completed = submitMode && report.submittedRows === report.totalRows && report.failedRows === 0 && report.holdRows === 0;
@@ -703,7 +755,7 @@ async function runOnce() {
       }
     }
   } finally {
-    await browser.close();
+    await browser?.close();
   }
 }
 
