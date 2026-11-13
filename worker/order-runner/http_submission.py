@@ -40,6 +40,41 @@ totalMemberDcPrice totalMemberOverlapDcPrice visitAddress visitMemo visitName vi
 '''.split())
 
 
+def submit_vendor_allowed(vendor, env):
+    return vendor == 'bofeel' and vendor in [value.strip() for value in env.get('B2B_HTTP_SUBMIT_VENDORS', '').split(',')]
+
+
+def read_bofeel_result(session, path, transport=None):
+    """고정된 주문내역 또는 이번 응답 번호의 완료 페이지만 한 번씩 조회한다."""
+    if path != '/mypage/order_list.php' and not re.fullmatch(r'/order/order_end\.php\?orderNo=\d{12,24}', path):
+        raise LoginError('주문 결과 조회 경로 불일치')
+    request = urllib.request.Request('https://bofeelmall.com' + path,
+        headers={'Referer': 'https://bofeelmall.com/order/order.php'})
+    with (transport or session.opener.open)(request, timeout=30) as response:
+        if response.code != 200:
+            raise LoginError('주문 결과 조회 실패')
+        raw = response.read()
+        if response.headers.get('Content-Encoding', '').lower() == 'gzip':
+            raw = gzip.decompress(raw)
+        text = raw.decode(response.headers.get_content_charset() or 'utf-8', errors='replace')
+        check_stop_signal(text)
+        if '로그아웃' not in text:
+            raise LoginError('주문 결과 인증 미확인')
+        return text
+
+
+def confirm_bofeel_result(session, number, before, transport=None):
+    end = read_bofeel_result(session, '/order/order_end.php?orderNo=' + number, transport)
+    # 사이트 완료 페이지의 번호와 내역의 새 번호 한 개를 함께 대조한다.
+    if not re.search(r'(?<!\d)' + re.escape(number) + r'(?!\d)', Document(end).root.text()):
+        return {'state': 'UNKNOWN'}
+    after = parse_order_numbers('bofeel', read_bofeel_result(session, '/mypage/order_list.php', transport))
+    if number in before or after - before != {number}:
+        return {'state': 'UNKNOWN'}
+    session.get_cart().require_empty()
+    return {'state': 'SUBMITTED', 'orderNumber': number}
+
+
 def parse_order_numbers(vendor, html, *, completion=False):
     """주문서의 임시 od_id는 제외한다. 고객정보와 본문은 반환·저장하지 않는다."""
     numbers = set()
@@ -119,7 +154,7 @@ def validate_request(vendor, url, method, fields, expected_fields, *, totals_ver
 def submit_prepared(session, draft, *, authorized=False, environ=None, transport=None):
     """부모의 증명·원장·행 잠금 확인 뒤 호출한다. 불명확하면 UNKNOWN, 재전송 없음."""
     env = os.environ if environ is None else environ
-    if env.get('ENABLE_B2B_HTTP_SUBMIT') != 'true' or not authorized:
+    if env.get('ENABLE_B2B_HTTP_SUBMIT') != 'true' or not authorized or not submit_vendor_allowed(session.vendor, env):
         raise LoginError('HTTP 최종 제출 잠금')
     if not session.authenticated or getattr(session, 'submission_attempted', False):
         raise LoginError('인증 미확인 또는 제출 재시도 금지')
@@ -128,6 +163,11 @@ def submit_prepared(session, draft, *, authorized=False, environ=None, transport
     url = ENDPOINTS[session.vendor]
     validate_request(session.vendor, url, 'POST', draft.fields, draft.expected_fields,
                      totals_verified=draft.report.get('submission_ready') is True)
+    # 전송 전 조회 실패는 HOLD다. 전송 후 실패는 아래에서 UNKNOWN으로 멈춘다.
+    before = parse_order_numbers('bofeel', read_bofeel_result(session, '/mypage/order_list.php', transport))
+    if not before:
+        raise LoginError('주문내역 첫 페이지 식별자 미확인')
+    validate_amount_snapshot(draft)
     # 전송 전에 예약한다. 전송 후 어떤 예외도 재시도하지 않는다.
     session.submission_attempted = True
     request = urllib.request.Request(url, data=urllib.parse.urlencode(draft.fields).encode(),
@@ -149,12 +189,11 @@ def submit_prepared(session, draft, *, authorized=False, environ=None, transport
             check_stop_signal(text)
             numbers = parse_order_numbers(session.vendor, text, completion=True)
             if len(numbers) == 1 and re.search(r'주문(?:이|이 정상적으로)?\s*(?:완료|접수)', Document(text).root.text()):
-                return {'state': 'SUBMITTED', 'orderNumber': next(iter(numbers))}
+                return confirm_bofeel_result(session, next(iter(numbers)), before, transport)
             if session.vendor == 'bofeel':
                 redirected = bofeel_end_redirect(text)
                 if redirected:
-                    # 완료 페이지·주문내역 대조 전이므로 SUBMITTED가 아니다. 큐 경로는 UNKNOWN으로 취급한다.
-                    return {'state': 'REDIRECTED', 'orderNumber': redirected}
+                    return confirm_bofeel_result(session, redirected, before, transport)
             return {'state': 'UNKNOWN'}
     except Exception:
         return {'state': 'UNKNOWN'}

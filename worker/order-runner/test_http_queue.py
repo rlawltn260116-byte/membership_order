@@ -207,7 +207,7 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(session.deleted, 0)
             session.submission_attempted = True
             return {'state': 'SUBMITTED', 'orderNumber': '20261111000001'}
-        env = {'ENABLE_B2B_HTTP_CART': 'true', 'ENABLE_B2B_HTTP_SUBMIT': 'true', 'BOFEEL_LOGIN_ID': 'mock', 'BOFEEL_LOGIN_PASSWORD': 'mock'}
+        env = {'ENABLE_B2B_HTTP_CART': 'true', 'ENABLE_B2B_HTTP_SUBMIT': 'true', 'B2B_HTTP_SUBMIT_VENDORS': 'bofeel', 'BOFEEL_LOGIN_ID': 'mock', 'BOFEEL_LOGIN_PASSWORD': 'mock'}
         with patch('http_queue.prepare_bofeel_group', side_effect=ready), patch('http_queue.submit_prepared', side_effect=fake_submit), patch('sys.stdout', new=io.StringIO()) as out, patch('sys.stdin', new=io.StringIO('{"submit":true,"sourceKey":"mock-source-1"}\n')):
             run('bofeel', [group('bofeel')], env, session_factory=lambda vendor: session, execution_mode='SUBMIT')
         self.assertEqual(session.login_count, 1)
@@ -230,7 +230,7 @@ class QueueTests(unittest.TestCase):
                 session.quantity=1;session.created_row=session.get_cart().rows[0];session.retained_for_submit=True
                 value=OrderDraft([],{'submission_ready':True});value.expected_fields=[]
                 return value
-            env={'ENABLE_B2B_HTTP_CART':'true','BOFEEL_LOGIN_ID':'mock','BOFEEL_LOGIN_PASSWORD':'mock'}
+            env={'ENABLE_B2B_HTTP_CART':'true','B2B_HTTP_SUBMIT_VENDORS':'bofeel','BOFEEL_LOGIN_ID':'mock','BOFEEL_LOGIN_PASSWORD':'mock'}
             if mode!='disabled':env['ENABLE_B2B_HTTP_SUBMIT']='true'
             command={'submit':True,'sourceKey':'mock-source-1'}
             if mode=='wrong-source':command['sourceKey']='other'
@@ -242,7 +242,7 @@ class QueueTests(unittest.TestCase):
                     patch('sys.stdin',new=io.StringIO(json.dumps(command)+'\n')):
                 run('bofeel',groups,env,session_factory=lambda vendor:session,execution_mode='SUBMIT')
             send.assert_not_called()
-            self.assertEqual(session.deleted,1)
+            self.assertEqual(session.deleted,0 if mode=='disabled' else 1)
             self.assertEqual(session.quantity,0)
             self.assertEqual(len(out.getvalue().splitlines()),1)
 

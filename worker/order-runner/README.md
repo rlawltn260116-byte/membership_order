@@ -32,6 +32,24 @@ Configure these GitHub Actions secrets before enabling the worker:
 
 `FIREBASE_QUEUE_PATH` defaults to `order-ops/jobs`; `WORKER_ID` is optional. State flow: `QUEUED → RUNNING → AWAITING_REVIEW → REVIEWED → SUBMIT_QUEUED → RUNNING → COMPLETED`. Failures and unresolved fields remain `HOLD` or `FAILED`. 최종 제출 워커는 검토 수락, 최종 승인, 승인 코드 증명값을 모두 다시 확인합니다.
 
+## 보필 운영 준비·제출 설정 (2026-11-13)
+
+이 절은 아래의 과거 HTTP 선택·스위치 미연결 설명보다 우선한다. 운영 큐의 HTTP 경로는 보필만 지원하고 이로움은 기존 Playwright를 사용한다. `B2B_ORDER_TRANSPORT=http`로 이로움을 HTTP로 바꿀 수 없다. 실제 사이트 요청 없이 합성 HTTP와 모의 Firebase·GitHub 원장으로 검증하며 이 작업에서 운영 설정은 변경하지 않는다.
+
+| GitHub Actions 저장소 변수 | 켜는 값 | 끄는 값 |
+| --- | --- | --- |
+| `ENABLE_B2B_HTTP_CART` | `true`: 보필 자동 준비 허용 | `false` 또는 삭제: 준비·제출 보류 |
+| `ENABLE_B2B_HTTP_SUBMIT` | `true`: 승인 후 보필 제출 허용 | `false` 또는 삭제: 제출 HOLD |
+| `B2B_HTTP_SUBMIT_VENDORS` | `bofeel` | 빈 값 또는 삭제: 모든 HTTP 제출 HOLD |
+
+변수는 `process-queue`의 큐 처리 단계에 `vars.*`로 주입한다. 기본 꺼짐이며 즉시실행기 호출에도 적용한다. 수동 `b2b_http_cart` 입력은 기존 고정 상품 시험 job에만 적용한다. 목록은 쉼표와 앞뒤 공백을 지원하나 운영 전송기에서 정확한 `bofeel`만 허용한다. 다른 업체는 목록에 있어도 HTTP 제출하지 않는다. 기존 Firebase·이로움 세션·최종 승인 코드 secret과 `BOFEEL_LOGIN_ID`·`BOFEEL_LOGIN_PASSWORD`·32자 이상 고정 `B2B_SUBMISSION_LEDGER_KEY`가 필요하다. Python 설치 실패 시 보필을 HOLD하며 이로움 Playwright 처리는 계속한다.
+
+운영 화면에서 서버 준비 요청→배송지 묶음·상품/옵션·우편번호 판정 검토→검토 수락→승인 코드를 넣어 주문 확정→보필 주문번호 확인 순서로 진행한다. PREPARE는 우편번호 없는 보필 주소를 조회하고 기존의 정확한 후보 한 개 규칙으로 확정한다. 조회 근거를 작업 행에 저장해 내용 승인에 묶으며 제출 때는 주소를 보완하거나 바꾸지 않는다. 시트 선택·신규 주소·비고 전용 메모·금액/결제/동의 검증을 유지한다.
+
+제출은 신선한 승인 증명, 신뢰 원장 일회성 예약과 행 잠금 후 한 주문에 한 번만 실행한다. 응답의 완료 번호·완료 페이지·주문내역의 유일한 새 번호·빈 장바구니가 모두 맞아야 성공이다. 통신 유실·대조 실패는 UNKNOWN으로 보류하고 예외 처리 메뉴에서 확인한다. 원장·SUBMITTING·UNKNOWN을 지우거나 새 작업/승인으로 우회하지 않는다. 스위치를 끄면 이후 실행을 차단하며 이미 받은 설정이나 접수 주문은 취소하지 않는다. `http_cancel.py`는 기본 꺼짐이며 운영과 연결하지 않는다.
+
+상세와 검증 증거: `docs/b2b-http-ordering.md`, `.orca-routing/tasks/enable-bofeel/evidence.json`.
+
 ## Build
 
 Use Node.js 22 locally. The scheduled GitHub Actions runner uses the Playwright container image so Chromium is available. The Firebase service account JSON is read from the process environment and is never written into the repository.

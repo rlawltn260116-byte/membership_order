@@ -4,7 +4,7 @@ import { getDatabase } from "firebase-admin/database";
 import { chromium, type Browser, type Page } from "playwright";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { prepareHttpJob } from "../b2b-queue.mjs";
-import { sourceRowKey, ledgerReservation } from "../b2b-orders.mjs";
+import { sourceRowKey, ledgerReservation, usesHttp } from "../b2b-orders.mjs";
 import { submissionContent } from "../order-approval.mjs";
 import { workbookProblem, type SourceWorkbook } from "../workbook-policy.mjs";
 
@@ -27,6 +27,7 @@ type OrderRow = {
   memo?: string;
   status?: RowStatus;
   reason?: string;
+  postcodeSearchResponse?: unknown;
 };
 
 type ExecutionMode = "PREPARE" | "SUBMIT";
@@ -72,6 +73,9 @@ type WorkerDetail = {
   orderGroup?: number;
   addressMode?: string;
   submissionReady?: boolean;
+  submissionState?: string;
+  optionName?: string;
+  postcodeDecision?: string;
 };
 
 type WorkerReport = {
@@ -575,11 +579,6 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number, jobId: 
   };
 }
 
-function usesHttp(job: OrderJob): boolean {
-  return process.env.B2B_ORDER_TRANSPORT === "http" || job.sourceSystem === "보필" ||
-    Boolean(job.rows?.length && job.rows.every((row) => row.sourceSystem === "보필"));
-}
-
 async function prepareReport(job: OrderJob, browser: Browser | null): Promise<WorkerReport> {
   const startedAt = now();
   const rows = job.rows ?? [];
@@ -638,6 +637,7 @@ async function prepareReport(job: OrderJob, browser: Browser | null): Promise<Wo
       record: async (lineNo, value) => { await database.ref(`${queuePath}/${job.id}/submission/rows/${lineNo}`).update(value); },
     });
     details.push(...result.details);
+    if (!submitMode && result.preparedRows) job.rows = result.preparedRows as OrderRow[];
     httpCanSubmit = result.canSubmit;
   } else if (!serialized || !browser) {
     for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason: "서버에 이로움 로그인 세션이 설정되지 않았습니다." });
@@ -736,6 +736,7 @@ async function runOnce() {
           updatedAt: report.finishedAt,
           workerId,
           report,
+          ...(!submitMode && usesHttp(job) ? { rows: job.rows ?? [] } : {}),
           dashboardReview: submitMode
             ? {
                 ...job.dashboardReview,

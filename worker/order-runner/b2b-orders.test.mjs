@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { catalog, planOrders, mapProduct, splitDestination, submissionProblem, submitOnePrepared, publicLedgerRowKey, ledgerReservation } from "./b2b-orders.mjs";
+import { catalog, planOrders, mapProduct, splitDestination, submissionProblem, submitOnePrepared, publicLedgerRowKey, ledgerReservation, usesHttp } from "./b2b-orders.mjs";
 import { prepareHttpJob, runQueueVendor } from "./b2b-queue.mjs";
 import { submissionContent } from "./order-approval.mjs";
 
@@ -10,8 +10,8 @@ const row = (changes = {}) => ({ lineNo: 1, sourceSheet: "발주", sourceSystem:
 const job = (rows = [row()]) => ({ id: "시험작업", filename: "20261006_직배 발주서.xlsx", selectedSheet: "발주",
   sourceWorkbook: { filename: "20261006_직배 발주서.xlsx", sheets: [{ name: "발주", state: "visible" }] }, sourceSystem: "이로움", executionMode: "PREPARE", rows });
 function approved() {
-  const env = { ENABLE_B2B_HTTP_SUBMIT: "true", FINAL_SUBMISSION_APPROVAL_KEY: "모의시험승인코드12345" };
-  const value = { ...job(), executionMode: "SUBMIT", claimedFromStatus: "SUBMIT_QUEUED", dashboardReview: {
+  const env = { ENABLE_B2B_HTTP_SUBMIT: "true", B2B_HTTP_SUBMIT_VENDORS: "bofeel", FINAL_SUBMISSION_APPROVAL_KEY: "모의시험승인코드12345" };
+  const value = { ...job([row({ sourceSystem: "보필", productName: "BFSH10" })]), sourceSystem: "보필", executionMode: "SUBMIT", claimedFromStatus: "SUBMIT_QUEUED", dashboardReview: {
     reviewedFromStatus: "REVIEWED", decision: "ACCEPTED", finalSubmissionApproved: true,
     finalSubmissionApprovedAt: new Date().toISOString(), submissionRequestId: "mock-request-0001" } };
   value.dashboardReview.approvalProof = createHash("sha256").update(`${value.id}:${value.dashboardReview.submissionRequestId}:${env.FINAL_SUBMISSION_APPROVAL_KEY}`).digest("hex");
@@ -270,7 +270,7 @@ test("일회성 원장과 행 잠금은 새 작업·승인으로 중복 제출�
 });
 
 test("승인 뒤 상품·수량·배송지·메모를 바꾸면 원장 예약 전에 막는다", async () => {
-  for (const changes of [{ quantity: 2 }, { address: "다른 배송지" }, { memo: "변경 메모" }, { productName: "BFSH10" }, { recipientPhone: "01000000001" }]) {
+  for (const changes of [{ quantity: 2 }, { address: "다른 배송지" }, { memo: "변경 메모" }, { productName: "BFMB5" }, { recipientPhone: "01000000001" }]) {
     const { value, env } = approved(); value.rows[0] = { ...value.rows[0], ...changes };
     assert(submissionProblem(value, env));
     let calls = 0;
@@ -299,10 +299,11 @@ test("제출 잠금과 준비 미완료는 원장·전송 전 차단한다", asy
   assert.equal(called, 0);
 });
 
-test("양 업체는 같은 큐에서 준비하며 제출 꺼짐은 전송하지 않는다", async () => {
+test("HTTP 큐는 보필만 준비하고 이로움은 Playwright를 안내하며 제출 꺼짐은 전송하지 않는다", async () => {
   const value = job([row(), row({ lineNo: 2, orderId: "SO1234567891", sourceSystem: "보필", productName: "BFSH10" })]); const vendors = [];
   const result = await prepareHttpJob(value, { env: {}, runVendor: async (vendor, groups) => { vendors.push(vendor); return { submissionReady: false, details: groups.flatMap((g) => g.rows.map((r) => ({ lineNo: r.lineNo, status: "READY", reason: "모의 준비" }))) }; } });
-  assert.deepEqual(vendors, ["eroum", "bofeel"]); assert.equal(result.details.length, 2); assert.equal(result.canSubmit, false);
+  assert.deepEqual(vendors, ["bofeel"]); assert.equal(result.details.length, 2); assert.equal(result.canSubmit, false);
+  assert.match(result.details[0].reason, /Playwright/);
   const disabled = await runQueueVendor("bofeel", [], { env: {}, spawn: () => assert.fail("프로세스 실행 금지") });
   assert.equal(disabled.details.length, 0);
 });
@@ -323,4 +324,41 @@ test("스위치·승인·원장 중복·행 잠금·복수 주문은 각각 전�
     assert.equal(result.state, "HOLD", mode);
     assert.deepEqual(events, mode === "원장" ? ["원장"] : mode === "행잠금" ? ["원장", "행잠금"] : [], mode);
   }
+});
+
+test("허용 업체 목록은 빈 값·다른 업체·대소문자 차이를 거부하고 이로움 HTTP 전환도 거부한다", async () => {
+  const { value, env } = approved();
+  for (const vendors of [undefined, "", "eroum", "BOFEEL", "bofeel-extra"]) {
+    const flags = { ...env, B2B_HTTP_SUBMIT_VENDORS: vendors };
+    assert.match(submissionProblem(value, flags), /허용 업체/);
+    const result = await prepareHttpJob(value, { env: flags, runVendor: () => assert.fail("업체 차단 뒤 프로세스 실행 금지") });
+    assert(result.details.every(detail => detail.status === "HOLD"));
+  }
+  assert.equal(submissionProblem(value, { ...env, B2B_HTTP_SUBMIT_VENDORS: " other, bofeel " }), null);
+  const eroum = { ...value, sourceSystem: "이로움", rows: [row()] };
+  assert.match(submissionProblem(eroum, { ...env, B2B_HTTP_SUBMIT_VENDORS: "eroum,bofeel" }), /허용 업체/);
+  const previous = process.env.B2B_ORDER_TRANSPORT;
+  try {
+    process.env.B2B_ORDER_TRANSPORT = "http";
+    assert.equal(usesHttp(eroum), false);
+    assert.equal(usesHttp(value), true);
+  } finally {
+    if (previous === undefined) delete process.env.B2B_ORDER_TRANSPORT;
+    else process.env.B2B_ORDER_TRANSPORT = previous;
+  }
+});
+
+test("우편번호 검색 실패·복수 정확 후보는 HOLD이고 제출 때 응답을 새로 채우지 않는다", async () => {
+  const { value, env } = approved();
+  const source = { ...value, executionMode: "PREPARE", rows: value.rows.map(row => ({ ...row, zipcode: "", address: "서울 모의구 가상로 1" })) };
+  for (const response of [[], [{ resultData: { codeData: { code: "0" }, addressData: [
+    { roadAddress: "서울 모의구 가상로 1", zoneCode: "00000" }, { roadAddress: "서울 모의구 가상로 1", zoneCode: "00001" }] } }]]) {
+    const prepared = await prepareHttpJob(source, { env: { ...env, ENABLE_B2B_HTTP_CART: "true" }, lookupPostcodes: async () => response,
+      runVendor: () => assert.fail("우편번호 보류 뒤 장바구니 요청 금지") });
+    assert.equal(prepared.canSubmit, false); assert.equal(prepared.details[0].status, "HOLD");
+    assert.match(prepared.details[0].reason, /우편번호/);
+    assert.equal(prepared.preparedRows.length, 1);
+  }
+  await prepareHttpJob({ ...source, executionMode: "SUBMIT" }, { env: { ...env, ENABLE_B2B_HTTP_CART: "true" },
+    lookupPostcodes: () => assert.fail("내용 승인 뒤 우편번호 자동 변경 금지"), runVendor: () => assert.fail("잘못된 승인 뒤 실행 금지") });
 });

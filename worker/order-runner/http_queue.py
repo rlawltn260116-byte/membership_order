@@ -13,7 +13,7 @@ from http_cart import (CartRow, Document, OrderDraft, build_order_draft, control
                        one, parse_cart, replace, serialize, values)
 from http_login_draft import LoginError, StopSignalError
 from http_preparation import PreparationSession, eroum_product_fields
-from http_submission import submit_prepared
+from http_submission import submit_prepared, submit_vendor_allowed
 from http_amounts import quote_request, verify_eroum, verify_bofeel
 from bofeel_products import product_fields
 
@@ -276,6 +276,12 @@ def workbook_problem(group):
 
 
 def run(vendor, groups, env, session_factory=QueueSession, execution_mode='PREPARE'):
+    if execution_mode == 'SUBMIT' and (env.get('ENABLE_B2B_HTTP_SUBMIT') != 'true' or not submit_vendor_allowed(vendor, env)):
+        emit({'event': 'prepared', 'submissionReady': False,
+              'details': [{'lineNo': row['lineNo'], 'status': 'HOLD', 'vendor': vendor,
+                           'reason': 'HTTP 제출 스위치 또는 허용 업체 목록을 확인하지 못했습니다.'}
+                          for group in groups for row in group['rows']]})
+        return
     problem = next((issue for group in groups if (issue := workbook_problem(group))), None)
     if problem:
         emit({'event': 'prepared', 'submissionReady': False, 'reason': problem,

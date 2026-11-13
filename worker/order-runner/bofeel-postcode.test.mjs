@@ -100,7 +100,7 @@ test('같은 원본 배송지의 두 행이 서로 다른 우편번호로 확정
 
 test('시트 변경·검색 응답 변경은 재승인 전 원장·전송 전에 차단한다', () => {
   const job = input('서울 모의구 가상로 100-2', response(item()));
-  const env = { ENABLE_B2B_HTTP_SUBMIT: 'true', FINAL_SUBMISSION_APPROVAL_KEY: 'mock-approval-key-12345' };
+  const env = { ENABLE_B2B_HTTP_SUBMIT: 'true', B2B_HTTP_SUBMIT_VENDORS: 'bofeel', FINAL_SUBMISSION_APPROVAL_KEY: 'mock-approval-key-12345' };
   Object.assign(job, { executionMode: 'SUBMIT', claimedFromStatus: 'SUBMIT_QUEUED', dashboardReview: {
     reviewedFromStatus: 'REVIEWED', decision: 'ACCEPTED', finalSubmissionApproved: true,
     finalSubmissionApprovedAt: new Date().toISOString(), submissionRequestId: 'mock-request-1234' } });

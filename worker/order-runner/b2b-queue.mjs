@@ -3,7 +3,10 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { childEnvironment, CREDENTIAL_SECRETS } from "./b2b-http-cart.mjs";
-import { planOrders, submitOnePrepared, submissionProblem } from "./b2b-orders.mjs";
+import { planOrders, submitOnePrepared, submissionProblem, httpSubmitAllowed, vendorFor, splitDestination } from "./b2b-orders.mjs";
+import { bofeelPostcodeKeyword } from "./bofeel-postcode.mjs";
+import { workbookProblem } from "./workbook-policy.mjs";
+import { lookupBofeelPostcodes } from "./b2b-postcode-lookup.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const safeDetail = (value) => ({ lineNo: value.lineNo, status: value.status, reason: value.reason,
@@ -12,10 +15,15 @@ const safeDetail = (value) => ({ lineNo: value.lineNo, status: value.status, rea
   vendor: value.vendor, orderGroup: value.orderGroup, addressMode: value.addressMode, submissionReady: value.submissionReady === true });
 
 export async function runQueueVendor(vendor, groups, { env = process.env, spawn = nodeSpawn, onPrepared, submitMode = false, timeoutMs = 180_000 } = {}) {
+  if (vendor !== "bofeel" || (submitMode && !httpSubmitAllowed(vendor, env))) return { details: [], reason: "HTTP 제출 허용 업체 목록에 없는 업체입니다." };
   if (env.ENABLE_B2B_HTTP_CART !== "true") return { details: [], reason: "HTTP 준비 기능이 꺼져 있습니다." };
   if (!CREDENTIAL_SECRETS[vendor]?.every((key) => env[key])) return { details: [], reason: "업체 로그인 설정이 없습니다." };
   return await new Promise((resolve) => {
-    let child, timer, closed = false, buffer = "", prepared = null, submitted = null, handling = Promise.resolve();
+    let child, timer, closed = false, buffer = "", prepared = null, submitted = null, commandSent = false, handling = Promise.resolve();
+    const interruptedResult = reason => ({ details: [], submissionReady: false, reason,
+      // 행 저장 콜백이 끝난 뒤 확인된 최종 결과를 최종 보고까지 보존한다.
+      ...(prepared?.submission ? { submission: prepared.submission } : commandSent ? { submission: {
+        state: "UNKNOWN", reason: "제출 결과가 불명확합니다. 주문내역을 확인하기 전에는 재시도하지 마세요." } } : {}) });
     const finish = (result) => {
       if (closed) return;
       closed = true;
@@ -26,18 +34,21 @@ export async function runQueueVendor(vendor, groups, { env = process.env, spawn 
     const fail = () => {
       submitted?.({ state: "UNKNOWN" }); submitted = null;
       // 제출 결과 UNKNOWN 저장이 끝난 뒤 큐 보고를 마친다.
-      handling.finally(() => finish({ details: [], reason: "HTTP 준비 통신 결과가 불명확합니다. 자동 재시도하지 말고 장바구니를 확인하세요." }));
+      handling.finally(() => finish(interruptedResult("HTTP 준비 통신 결과가 불명확합니다. 자동 재시도하지 말고 장바구니를 확인하세요.")));
     };
     try {
       const childEnv = childEnvironment(vendor, env);
-      // 새 제출 잠금은 부모 환경의 정확한 값만 전달한다. workflow는 이 변수를 주입하지 않는다.
-      if (submitMode && env.ENABLE_B2B_HTTP_SUBMIT === "true") childEnv.ENABLE_B2B_HTTP_SUBMIT = env.ENABLE_B2B_HTTP_SUBMIT;
+      // 제출 모드에서만 부모의 정확한 설정을 전달하며 Python도 업체를 다시 검사한다.
+      if (submitMode && env.ENABLE_B2B_HTTP_SUBMIT === "true") {
+        childEnv.ENABLE_B2B_HTTP_SUBMIT = env.ENABLE_B2B_HTTP_SUBMIT;
+        childEnv.B2B_HTTP_SUBMIT_VENDORS = env.B2B_HTTP_SUBMIT_VENDORS;
+      }
       const python = env.B2B_HTTP_PYTHON || (env.pythonLocation ? join(env.pythonLocation, process.platform === "win32" ? "python.exe" : "bin/python") : process.platform === "win32" ? "python" : "python3");
       child = spawn(python, ["-B", "-X", "utf8", join(here, "http_queue.py"), "--vendor", vendor],
         { cwd: here, env: childEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     } catch { fail(); return; }
     timer = setTimeout(() => { child.kill?.("SIGKILL"); fail(); }, timeoutMs);
-    child.stdin.on("error", () => { submitted?.({ state: "UNKNOWN" }); fail(); });
+    child.stdin.on("error", fail);
     child.stdout.setEncoding("utf8");
     child.stderr.on("data", () => {});
     child.on("error", fail);
@@ -63,6 +74,7 @@ export async function runQueueVendor(vendor, groups, { env = process.env, spawn 
             if (onPrepared) {
               prepared.submission = await onPrepared(prepared, async () => await new Promise((done) => {
                 submitted = done;
+                commandSent = true;
                 child.stdin.write(JSON.stringify({ submit: true, sourceKey: prepared.sourceKey,
                   ...(prepared.sourceKeys ? { sourceKeys: prepared.sourceKeys } : {}) }) + "\n");
               }));
@@ -73,14 +85,31 @@ export async function runQueueVendor(vendor, groups, { env = process.env, spawn 
       }
     });
     child.on("close", (code) => {
-      submitted?.({ state: "UNKNOWN" });
-      handling.finally(() => finish(code === 0 && prepared ? prepared : { details: [], reason: "HTTP 준비가 중단되었습니다. 장바구니 확인이 필요합니다." }));
+      submitted?.({ state: "UNKNOWN" }); submitted = null;
+      handling.finally(() => finish(code === 0 && prepared ? prepared : interruptedResult("HTTP 준비가 중단되었습니다. 장바구니 확인이 필요합니다.")));
     });
     child.stdin.write(JSON.stringify({ groups, executionMode: submitMode ? "SUBMIT" : "PREPARE" }) + "\n");
   });
 }
 
-export async function prepareHttpJob(job, { env = process.env, runVendor = runQueueVendor, reserveLedger, lockRow, record } = {}) {
+export async function prepareHttpJob(job, { env = process.env, runVendor = runQueueVendor, lookupPostcodes = lookupBofeelPostcodes, reserveLedger, lockRow, record } = {}) {
+  let preparedRows;
+  // 우편번호 보완은 PREPARE에서만 한다. 결과는 작업 행에 저장되어 내용 승인에 묶인다.
+  if (job.executionMode !== "SUBMIT" && env.ENABLE_B2B_HTTP_CART === "true" && !workbookProblem(job) && job.rows?.length <= 30) {
+    const keywordFor = row => vendorFor(row.sourceSystem || job.sourceSystem) === "bofeel" &&
+      (!row.status || row.status === "READY") && !row.zipcode && row.postcodeSearchResponse === undefined
+      ? bofeelPostcodeKeyword(row.address || splitDestination(row.destination, "bofeel")?.address || "") : null;
+    const keywords = [...new Set(job.rows.map(keywordFor).filter(Boolean))];
+    if (keywords.length) {
+      let responses = [];
+      try { responses = await lookupPostcodes(keywords, { env }); } catch { /* 미확인 응답은 HOLD */ }
+      preparedRows = job.rows.map(row => {
+        const keyword = keywordFor(row);
+        return keyword ? { ...row, postcodeSearchResponse: responses[keywords.indexOf(keyword)] ?? null } : row;
+      });
+      job = { ...job, rows: preparedRows };
+    }
+  }
   const plan = planOrders(job);
   if (job.executionMode === "SUBMIT") {
     const problem = submissionProblem(job, env);
@@ -92,6 +121,10 @@ export async function prepareHttpJob(job, { env = process.env, runVendor = runQu
   for (const vendor of ["eroum", "bofeel"]) {
     const groups = plan.groups.filter((g) => g.vendor === vendor);
     if (!groups.length) continue;
+    if (vendor !== "bofeel") {
+      details.push(...groups.flatMap(group => group.rows.map(row => ({ lineNo: row.lineNo, status: "HOLD", reason: "이로움은 기존 Playwright 경로에서 처리해야 합니다." }))));
+      continue;
+    }
     const result = await runVendor(vendor, groups, { env, submitMode: job.executionMode === "SUBMIT",
       onPrepared: job.executionMode === "SUBMIT" ? async (prepared, transport) => await submitOnePrepared({ job, prepared, env, reserveLedger, lockRow, record, transport }) : undefined });
     for (const row of groups.flatMap((g) => g.rows)) {
@@ -99,11 +132,16 @@ export async function prepareHttpJob(job, { env = process.env, runVendor = runQu
       if (job.executionMode === "SUBMIT") {
         const submission = result.submission;
         if (submission?.state === "SUBMITTED") Object.assign(detail, { status: "READY", orderNumber: submission.orderNumber, submittedAt: submission.submittedAt, reason: "HTTP 주문 접수 번호를 확인했습니다." });
-        else Object.assign(detail, { status: "HOLD", reason: submission?.reason || "제출 필드 검증 미완료로 HTTP 제출을 잠갔습니다." });
+        else Object.assign(detail, { status: "HOLD", submissionState: submission?.state || "HOLD", reason: submission?.reason || "제출 필드 검증 미완료로 HTTP 제출을 잠갔습니다." });
       }
       details.push(detail);
     }
-    canSubmit = plan.groups.length === 1 && plan.rows.every(row => row.status === "READY") && result.submissionReady === true && env.ENABLE_B2B_HTTP_SUBMIT === "true";
+    canSubmit = plan.groups.length === 1 && plan.rows.every(row => row.status === "READY") && result.submissionReady === true && env.ENABLE_B2B_HTTP_SUBMIT === "true" && httpSubmitAllowed(vendor, env);
   }
-  return { details: details.sort((a, b) => a.lineNo - b.lineNo), canSubmit };
+  for (const detail of details) {
+    const row = plan.rows.find(row => row.lineNo === detail.lineNo);
+    if (row) Object.assign(detail, { productId: row.mapping.productId || "", optionName: row.mapping.optionName || (row.mapping.status === "READY" ? "기본 옵션" : "옵션 미확정"),
+      quantity: row.quantity, postcodeDecision: row.postcodeDecision });
+  }
+  return { details: details.sort((a, b) => a.lineNo - b.lineNo), canSubmit, ...(preparedRows ? { preparedRows } : {}) };
 }

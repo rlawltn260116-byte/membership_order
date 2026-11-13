@@ -120,7 +120,7 @@ test("연결부는 기존 주문 제출 경로·Playwright·Firebase를 불러�
   assert.equal(/def\s+\w*submit\w*\s*\(/i.test(python), false);
 });
 
-test("workflow의 HTTP 장바구니 job은 수동 실행과 저장소 변수가 모두 있어야 돌고 기존 job은 바뀌지 않는다", () => {
+test("고정 HTTP 장바구니 시험 job의 수동 입력 조건은 큐 처리와 분리된다", () => {
   const workflow = readFileSync(new URL("../../.github/workflows/order-worker.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const [queueJob, httpJob] = workflow.split("\n  b2b-http-cart:\n");
   assert.ok(httpJob, "HTTP job 없음");
@@ -137,7 +137,7 @@ test("workflow의 HTTP 장바구니 job은 수동 실행과 저장소 변수가 
     assert.equal(httpJob.includes(name), false, name);
   }
   // 주문 처리 job은 큐 HTTP 준비용 로그인 secret을 받지만, 준비 스위치와 고정 시험 스크립트는 쓰지 않는다.
-  for (const name of ["ENABLE_B2B_HTTP_CART", "http_preparation", "b2b-http-cart"]) {
+  for (const name of ["http_preparation", "b2b-http-cart"]) {
     assert.equal(queueCode.includes(name), false, name);
   }
   assert.match(queueJob, /FINAL_SUBMISSION_APPROVAL_KEY: \$\{\{ secrets\.FINAL_SUBMISSION_APPROVAL_KEY \}\}/);
@@ -154,10 +154,16 @@ const queueSteps = () => {
   return code.split("\n      - name: ").slice(1).map((text) => ({ name: text.split("\n")[0], text }));
 };
 
-test("workflow 어디에도 HTTP 제출 스위치가 없다", () => {
+test("큐 스위치와 업체 목록은 저장소 변수로만 주입하고 수동 입력에 묶지 않는다", () => {
   const workflow = readWorkflow();
-  assert.equal(workflow.includes("ENABLE_B2B_HTTP_SUBMIT"), false);
-  assert.equal(/HTTP_SUBMIT/.test(workflow), false);
+  const step = queueSteps().find(s => s.name === "Process queued orders");
+  for (const name of ["ENABLE_B2B_HTTP_CART", "ENABLE_B2B_HTTP_SUBMIT", "B2B_HTTP_SUBMIT_VENDORS"]) {
+    const assignments = workflow.split("\n").filter(line => new RegExp(`^\\s*${name}:`).test(line));
+    assert.ok(assignments.length);
+    for (const assignment of assignments) assert.equal(assignment.trim(), name + ": ${{ vars." + name + " }}");
+    assert.ok(step.text.includes(name + ": ${{ vars." + name + " }}"));
+  }
+  assert.equal(step.text.includes("inputs."), false);
 });
 
 test("process-queue의 큐 처리 단계에 HTTP 로그인 secret 4개와 원장 키가 전달된다", () => {
@@ -168,7 +174,7 @@ test("process-queue의 큐 처리 단계에 HTTP 로그인 secret 4개와 원장
     assert.match(step.text, new RegExp(`\\n          ${name}: \\$\\{\\{ secrets\\.${name} \\}\\}\\n`), name);
   }
   // 준비 스위치는 그대로 b2b-http-cart job과 저장소 변수의 몫이다.
-  assert.equal(/ENABLE_B2B_HTTP_CART|vars\./.test(step.text), false);
+  assert.match(step.text, /ENABLE_B2B_HTTP_CART: \$\{\{ vars\.ENABLE_B2B_HTTP_CART \}\}/);
   // secret 값을 출력하는 명령이 없다.
   assert.equal(/echo[^\n]*(LOGIN|LEDGER)/.test(readWorkflow()), false);
 });

@@ -151,9 +151,9 @@ class AmountTests(unittest.TestCase):
             self.assertFalse(d.report.get('submission_ready',False))
 
     def test_expired_or_forged_ready_draft_stops_before_transport(self):
-        s,d,g,source,objects,renders=eroum_case()
-        with patch('http_amounts.render',side_effect=renders): verify_eroum(s,d,g,source,objects)
-        session=SimpleNamespace(vendor='eroum',authenticated=True)
+        s,d,g,source,renderer=bofeel_case()
+        with patch('http_amounts.render',side_effect=renderer): verify_bofeel(s,d,g,source)
+        session=SimpleNamespace(vendor='bofeel',authenticated=True)
         send=Mock()
         for mode in ('expired','missing_snapshot','missing_consent'):
             value=copy.deepcopy(d)
@@ -161,7 +161,7 @@ class AmountTests(unittest.TestCase):
             if mode=='missing_snapshot': del value.amount_snapshot
             if mode=='missing_consent': value.report['consent_verified']=False
             with self.subTest(mode=mode),self.assertRaises(LoginError):
-                submit_prepared(session,value,authorized=True,environ={'ENABLE_B2B_HTTP_SUBMIT':'true'},transport=send)
+                submit_prepared(session,value,authorized=True,environ={'ENABLE_B2B_HTTP_SUBMIT':'true','B2B_HTTP_SUBMIT_VENDORS':'bofeel'},transport=send)
         send.assert_not_called()
 
     def test_amount_request_allowlist_refuses_order_processing_and_wrong_modes_without_network(self):

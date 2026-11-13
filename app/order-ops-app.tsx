@@ -63,6 +63,7 @@ import { createOrderJob, getOrderJob, listOrderJobs, updateOrderJob } from "@/li
 import InventoryRegistrationPage from "./inventory-registration-page";
 
 type OrderRow = {
+  postcodeSearchResponse?: unknown;
   sourceSheet: string;
   lineNo: number;
   sourceSystem: string;
@@ -134,6 +135,9 @@ type Job = {
       orderGroup?: number;
       addressMode?: string;
       submissionReady?: boolean;
+      submissionState?: string;
+      optionName?: string;
+      postcodeDecision?: string;
     }>;
   };
   dashboardReview?: {
@@ -1296,7 +1300,7 @@ function WorkerReviewPanel({
       <EmptyPanel
         title={job.executionMode === "SUBMIT" ? "실제 주문 확정을 처리하고 있습니다" : "서버가 주문을 준비하고 있습니다"}
         text={job.executionMode === "SUBMIT"
-          ? "배송정보와 상품을 다시 확인한 뒤 이로움에 주문을 제출합니다. 이전 준비 결과는 새 실행이 끝나면 교체됩니다."
+          ? `배송정보와 상품을 다시 확인한 뒤 ${job.sourceSystem}에 주문을 제출합니다. 이전 준비 결과는 새 실행이 끝나면 교체됩니다.`
           : "이전 결과는 새 실행의 승인에 사용할 수 없습니다. 처리가 끝나면 이 화면에 최신 결과가 표시됩니다."}
       />
     );
@@ -1426,6 +1430,8 @@ function WorkerReviewPanel({
                     <TableCell><Badge className={statusClass(detail.status)}>{statusLabel(detail.status)}</Badge></TableCell>
                     <TableCell className="whitespace-normal">
                       {detail.reason}
+                      {detail.submissionState === "UNKNOWN" ? <div className="mt-1 font-semibold text-rose-700">UNKNOWN · 결과 불명확: 주문내역 확인 전 재시도 금지</div> : null}
+                      {job.sourceSystem === "보필" ? <div className="mt-1 text-xs text-slate-600">상품·옵션: {job.rows?.find(row => row.lineNo === detail.lineNo)?.productName || detail.productId || "미확정"} · {detail.optionName || "옵션 미확정"} · 수량 {detail.quantity ?? "-"}<br />{detail.postcodeDecision || "우편번호 판정 미확인"}</div> : null}
                       {detail.reviewNotes?.length ? <div className="mt-2 font-medium text-amber-800">특이사항: {detail.reviewNotes.join(" / ")}</div> : null}
                       {report.transport === "HTTP" && detail.orderGroup ? <div className="mt-1 text-xs text-slate-500">{detail.vendor === "bofeel" ? "보필" : "이로움"} · 배송지 묶음 {detail.orderGroup} · {detail.addressMode === "shippingNew" ? "직접 입력" : "신규 배송지"} · 상품 {detail.productId}</div> : null}
                       {detail.orderNumber ? <div className="mt-1 font-semibold text-emerald-700">주문번호 {detail.orderNumber}</div> : null}
@@ -1861,7 +1867,8 @@ function MappingPage() {
 }
 
 function ExceptionsPage({ jobs, onOpenJob }: { jobs: Job[]; onOpenJob: (id: string) => void }) {
-  const exceptions = jobs.filter((job) => job.status === "FAILED" || job.status === "HOLD" || job.failedRows > 0 || job.holdRows > 0);
+  const exceptions = jobs.filter((job) => job.status === "FAILED" || job.status === "HOLD" || job.failedRows > 0 || job.holdRows > 0 ||
+    (job.report?.failedRows ?? 0) > 0 || (job.report?.holdRows ?? 0) > 0 || job.report?.details.some(detail => detail.submissionState === "UNKNOWN"));
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
@@ -1884,7 +1891,8 @@ function ExceptionsPage({ jobs, onOpenJob }: { jobs: Job[]; onOpenJob: (id: stri
                   <Badge className={statusClass(job.status)}>{statusLabel(job.status)}</Badge>
                 </div>
                 <div className="mt-1 text-sm text-slate-600">
-                  {job.sourceSystem || "미지정"} · 보류 {job.holdRows}건 · 실패 {job.failedRows}건
+                  {job.sourceSystem || "미지정"} · 보류 {job.report?.holdRows ?? job.holdRows}건 · 실패 {job.report?.failedRows ?? job.failedRows}건
+                  {job.report?.details.some(detail => detail.submissionState === "UNKNOWN") ? " · UNKNOWN: 주문내역 확인 필요" : ""}
                 </div>
               </button>
             ))}

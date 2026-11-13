@@ -40,6 +40,12 @@ const same = (left, right) => left && right && JSON.stringify(left.head) === JSO
   left.location === right.location && left.main === right.main && left.sub === right.sub && left.mountain === right.mountain;
 const baseOnly = parsed => parsed && (!parsed.detail || /^\([^()]*\)$/.test(parsed.detail));
 
+export function bofeelPostcodeKeyword(address) {
+  const parsed = splitAddress(address, 'road') || splitAddress(address, 'ground');
+  if (!parsed) return null;
+  return [...parsed.head, parsed.location, `${parsed.mountain ? '산' : ''}${parsed.main}${parsed.sub ? '-' + parsed.sub : ''}`].join(' ');
+}
+
 export function resolveBofeelPostcode(address, response) {
   const source = splitAddress(address, 'road') || splitAddress(address, 'ground');
   if (!source) return hold('발주서의 시·군·구와 도로명·건물번호 또는 동·리·지번을 확정할 수 없습니다.');

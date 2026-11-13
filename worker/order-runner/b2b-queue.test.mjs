@@ -5,7 +5,7 @@ import { PassThrough, Writable } from "node:stream";
 import { runQueueVendor } from "./b2b-queue.mjs";
 
 const groups = [{ vendor: "bofeel", rows: [{ lineNo: 1, sourceKey: "mock-source" }] }];
-const env = { ENABLE_B2B_HTTP_CART: "true", ENABLE_B2B_HTTP_SUBMIT: "true", BOFEEL_LOGIN_ID: "mock-id", BOFEEL_LOGIN_PASSWORD: "mock-password",
+const env = { ENABLE_B2B_HTTP_CART: "true", ENABLE_B2B_HTTP_SUBMIT: "true", B2B_HTTP_SUBMIT_VENDORS: "bofeel", BOFEEL_LOGIN_ID: "mock-id", BOFEEL_LOGIN_PASSWORD: "mock-password",
   FIREBASE_SERVICE_ACCOUNT_JSON: "다른비밀", GITHUB_TOKEN: "다른비밀", FINAL_SUBMISSION_APPROVAL_KEY: "다른비밀", B2B_SUBMISSION_LEDGER_KEY: "다른비밀" };
 const event = { event: "prepared", sourceKey: "mock-source", submissionReady: true, cartVerified: true, finalEmpty: false,
   details: [{ lineNo: 1, status: "READY", reason: "모의 준비", vendor: "bofeel", cookie: "출력금지" }] };
@@ -58,8 +58,17 @@ test("행 누락·중복·대조 실패 결과는 제출 가능으로 받지 않
 
 test("전송 명령 뒤 자식 결과가 끊기면 UNKNOWN을 콜백에 전달하고 재전송하지 않는다", async () => {
   const child = fakeChild(event, false); let outcome;
-  await runQueueVendor("bofeel", groups, { env, submitMode: true, timeoutMs: 20, spawn: () => child,
+  const result = await runQueueVendor("bofeel", groups, { env, submitMode: true, timeoutMs: 20, spawn: () => child,
     onPrepared: async (_, transport) => { outcome = await transport(); return outcome; } });
   assert.equal(outcome.state, "UNKNOWN");
+  assert.equal(result.submission.state, "UNKNOWN");
   assert.equal(child.commands.filter((command) => command.submit).length, 1);
+});
+
+test("이로움과 목록 밖 업체는 브리지에서도 프로세스 생성 전에 차단한다", async () => {
+  for (const [vendor, flags] of [["eroum", env], ["bofeel", { ...env, B2B_HTTP_SUBMIT_VENDORS: "" }]]) {
+    const result = await runQueueVendor(vendor, groups, { env: flags, submitMode: true,
+      spawn: () => assert.fail("차단한 업체의 Python 실행 금지") });
+    assert.deepEqual(result.details, []); assert.match(result.reason, /허용 업체/);
+  }
 });

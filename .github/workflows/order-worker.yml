@@ -85,7 +85,10 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           EROUM_STORAGE_STATE_JSON: ${{ secrets.EROUM_STORAGE_STATE_JSON }}
           FINAL_SUBMISSION_APPROVAL_KEY: ${{ secrets.FINAL_SUBMISSION_APPROVAL_KEY }}
-          # HTTP 준비 로그인 값과 원장 HMAC 키. HTTP 제출 스위치와 준비 스위치는 넣지 않는다.
+          # 큐의 보필 준비·제출은 저장소 변수로만 켠다. 수동 시험 입력과 무관하다.
+          ENABLE_B2B_HTTP_CART: ${{ vars.ENABLE_B2B_HTTP_CART }}
+          ENABLE_B2B_HTTP_SUBMIT: ${{ vars.ENABLE_B2B_HTTP_SUBMIT }}
+          B2B_HTTP_SUBMIT_VENDORS: ${{ vars.B2B_HTTP_SUBMIT_VENDORS }}
           EROUM_LOGIN_ID: ${{ secrets.EROUM_LOGIN_ID }}
           EROUM_LOGIN_PASSWORD: ${{ secrets.EROUM_LOGIN_PASSWORD }}
           BOFEEL_LOGIN_ID: ${{ secrets.BOFEEL_LOGIN_ID }}

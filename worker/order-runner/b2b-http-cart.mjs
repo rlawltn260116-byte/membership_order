@@ -28,7 +28,7 @@ export function isEnabled(env = process.env) {
 export function childEnvironment(vendor, env = process.env) {
   const names = CREDENTIAL_SECRETS[vendor];
   if (!names) throw new Error("지원하지 않는 업체");
-  const child = { [ENABLE_FLAG]: "true", PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", PYTHONDONTWRITEBYTECODE: "1" };
+  const child = { [ENABLE_FLAG]: env[ENABLE_FLAG], PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", PYTHONDONTWRITEBYTECODE: "1" };
   for (const name of PASSTHROUGH) if (env[name] !== undefined) child[name] = env[name];
   for (const name of names) child[name] = env[name];
   return child;

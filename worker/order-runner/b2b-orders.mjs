@@ -14,6 +14,16 @@ export function vendorFor(value) {
   return ({ 이로움: "eroum", THK: "eroum", THKC: "eroum", eroum: "eroum", 보필: "bofeel", bofeel: "bofeel" })[norm(value)] ?? null;
 }
 
+// 운영 HTTP 경로는 보필만 지원한다. 변수에 이로움을 넣어도 허용하지 않는다.
+export function httpSubmitAllowed(vendor, env = process.env) {
+  return vendor === "bofeel" && String(env.B2B_HTTP_SUBMIT_VENDORS ?? "").split(",").map(value => value.trim()).includes(vendor);
+}
+
+export function usesHttp(job) {
+  return vendorFor(job.sourceSystem) === "bofeel" ||
+    Boolean(job.rows?.length && job.rows.every(row => vendorFor(row.sourceSystem) === "bofeel"));
+}
+
 export function mapProduct(vendor, row) {
   const name = norm(row.productName ?? row["품명"]);
   const matches = [];
@@ -66,11 +76,12 @@ export function normalizeRow(row, job, index) {
   let address = originalAddress;
   const phone = norm(row.recipientPhone ?? row["납품처전화번호"]).replace(/[\s-]/g, "");
   let detail = norm(row.addressDetail), postcode = norm(row.zipcode);
-  let postcodeReason = "";
+  let postcodeReason = "", postcodeDecision = /^\d{5}$/.test(postcode) ? "입력 우편번호 형식 확인" : "우편번호 미확정";
   if (vendor === "bofeel" && row.postcodeSearchResponse !== undefined) {
     const resolved = resolveBofeelPostcode(originalAddress, row.postcodeSearchResponse);
+    postcodeDecision = resolved.decision === "USE" ? `우편번호 확정: ${resolved.postcode}` : resolved.reason;
     if (resolved.decision === "HOLD") postcodeReason = resolved.reason;
-    else if (postcode && postcode !== resolved.postcode) postcodeReason = "우편번호 보류: 입력한 우편번호와 검색 결과가 다릅니다.";
+    else if (postcode && postcode !== resolved.postcode) postcodeDecision = postcodeReason = "우편번호 보류: 입력한 우편번호와 검색 결과가 다릅니다.";
     else {
       address = resolved.roadAddress;
       detail = [resolved.detail, detail].filter(Boolean).join(" ");
@@ -101,7 +112,7 @@ export function normalizeRow(row, job, index) {
   const sourceKey = createHash("sha256").update(JSON.stringify(["source-row-v2", vendor, file, date, lineNo,
     name, address, detail, phone, mapped.model ?? norm(row.productName ?? row["품명"]), mapped.optionId ?? norm(row.option), Number(quantity)])).digest("hex");
   const destinationSourceKey = createHash("sha256").update(JSON.stringify([vendor, name, originalAddress, norm(row.addressDetail), phone])).digest("hex");
-  return { lineNo, sourceSheet: row.sourceSheet, vendor, orderId, quantity: Number(quantity), expectedPrice: row.expectedPrice ?? "", recipient, sourceKey, destinationSourceKey, mapping: mapped,
+  return { lineNo, sourceSheet: row.sourceSheet, vendor, orderId, quantity: Number(quantity), expectedPrice: row.expectedPrice ?? "", recipient, sourceKey, destinationSourceKey, mapping: mapped, postcodeDecision,
     status: reason ? "HOLD" : "READY", reason, reviewNotes: [...(mapped.reviewNotes ?? []), ...(postcodeReason ? [postcodeReason] : [])] };
 }
 
@@ -163,6 +174,7 @@ export function submissionProblem(job, env = process.env, time = Date.now()) {
   const review = job.dashboardReview ?? {};
   if (job.executionMode !== "SUBMIT" || job.claimedFromStatus !== "SUBMIT_QUEUED" || review.reviewedFromStatus !== "REVIEWED" || review.decision !== "ACCEPTED" || review.finalSubmissionApproved !== true) return "검토 완료와 운영 페이지 주문 확정 이력이 필요합니다.";
   const plan = planOrders(job);
+  if (!plan.groups.length || plan.groups.some(group => !httpSubmitAllowed(group.vendor, env))) return "HTTP 제출 허용 업체 목록에 없는 업체입니다.";
   if (!job.rows?.length || plan.groups.length !== 1 || plan.rows.some(row => row.status !== "READY") ||
       (plan.groups[0].vendor !== "bofeel" && job.rows.length !== 1)) return "한 번에 검증된 배송지 주문 한 건만 제출할 수 있습니다.";
   const key = env.FINAL_SUBMISSION_APPROVAL_KEY ?? "";
