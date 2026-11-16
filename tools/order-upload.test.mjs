@@ -84,7 +84,9 @@ test('실제 엑셀 업로드는 공용 규칙으로 이름을 나누고 모호�
       '가상시 모의로 1 /모의인', '가상시 모의로 1/ 모의인', '가상시 모의로 1 / 모의인',
       '가상시 모의로 1, 모의인', '가상시 모의로 1 모의인',
       '가상시 모의로 1 101동/102호 /모의인', '가상시 모의로 1 101동/102호',
-      '가상시 모의로 1', '가상시 모의로 1 /수취인확인필요'];
+      '가상시 모의로 1', '가상시 모의로 1 /수취인확인필요',
+      '가상시 모의로 1/모의인D', '가상시 모의로 1_모의인D',
+      '가상시 모의로 1, 모의인d', '가상시 모의로 1_MHD'];
     book.addWorksheet('발주').addRows([
       ['주문번호', '납품처', '납품처전화번호', '품명', '주문수량', '비고(내역)'],
       ...destinations.map((destination, i) => ['TEST-' + i, destination, '01000000000',
@@ -103,7 +105,7 @@ test('실제 엑셀 업로드는 공용 규칙으로 이름을 나누고 모호�
       assert.equal(row.reason, expected ? '' : DESTINATION_HOLD_REASON);
       assert.equal(row.memo, '모의 비고');
     });
-    assert.equal(saved.holdRows, vendor === '보필' ? 3 : 5);
+    assert.equal(saved.holdRows, vendor === '보필' ? 3 : 6);
     assert.equal(saved.failedRows, 0);
     const html = renderToStaticMarkup(React.createElement(app.context.OrderTable, { rows: saved.rows }));
     assert.match(html, /납품처에서 수취인 이름을 확정할 수 없음/);

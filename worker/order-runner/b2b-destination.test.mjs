@@ -37,3 +37,29 @@ test('보필의 쉼표·끝 이름과 괄호 안 쉼표는 기존 규칙대로 �
     assert.equal(splitDestination(text, 'bofeel'), null);
   }
 });
+
+
+test('수취인 끝 D 한 글자 제거와 원문 보존', () => {
+  for (const vendor of ['bofeel', 'eroum']) {
+    for (const separator of ['_', '/']) {
+      for (const suffix of ['D', 'd']) {
+        const original = `가상시 모의로 1${separator}모의인${suffix}`;
+        assert.deepEqual(splitDestination(original, vendor), { address: '가상시 모의로 1',
+          name: '모의인', normalizationNotes: ['수취인 끝 내부 표기 D 제거'] });
+        assert.ok(original.endsWith(suffix));
+      }
+      assert.deepEqual(splitDestination(`가상시 모의로 1${separator}모의인`, vendor),
+        { address: '가상시 모의로 1', name: '모의인' });
+    }
+    assert.equal(splitDestination('가상시 모의로 1/MH기관D', vendor), null);
+    assert.equal(splitDestination('가상시 모의로 1/모의인DD', vendor), null);
+    assert.deepEqual(splitDestination('가상시 모의로 1_MH기관D', vendor),
+      { address: '가상시 모의로 1', name: 'MH기관D' });
+    assert.deepEqual(splitDestination('가상시 모의로 1_MHD', vendor),
+      { address: '가상시 모의로 1', name: 'MHD' });
+  }
+  for (const separator of [', ', ' ']) {
+    assert.deepEqual(splitDestination(`가상시 모의로 1${separator}모의인d`, 'bofeel'),
+      { address: '가상시 모의로 1', name: '모의인', normalizationNotes: ['수취인 끝 내부 표기 D 제거'] });
+  }
+});
