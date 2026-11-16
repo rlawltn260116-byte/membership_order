@@ -16,7 +16,7 @@ import { PassThrough, Writable } from 'node:stream';
 import ExcelJS from 'exceljs';
 import * as policy from '../worker/order-runner/workbook-policy.mjs';
 import * as schedule from '../worker/order-runner/schedule.mjs';
-import { splitDestination } from '../worker/order-runner/b2b-destination.mjs';
+import { splitDestination, DESTINATION_HOLD_REASON } from '../worker/order-runner/b2b-destination.mjs';
 import { submissionContent } from '../worker/order-runner/order-approval.mjs';
 import { prepareHttpJob, runQueueVendor } from '../worker/order-runner/b2b-queue.mjs';
 import { workerHarness } from './helpers/order-worker-harness.mjs';
@@ -31,7 +31,7 @@ async function screen() {
     if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
     return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }];
   };
-  const context = { React, ExcelJS, console, window: { crypto: webcrypto }, TextEncoder, process: { env: {} }, ...policy, ...schedule, splitDestination, submissionContent,
+  const context = { React, ExcelJS, console, window: { crypto: webcrypto }, TextEncoder, process: { env: {} }, ...policy, ...schedule, splitDestination, DESTINATION_HOLD_REASON, submissionContent,
     useState: state, useRef: initial => state(() => ({ current: initial }))[0], useMemo: fn => fn(), useEffect: () => {},
     createOrderJob: async value => { const job = { ...value, id: 'saved' }; saved.push(job); return job; },
     listOrderJobs: async () => saved,
@@ -75,6 +75,43 @@ async function file(sheets) {
   }
   return new File([await book.xlsx.writeBuffer()], '20261112_직배(보필) 모의.xlsx');
 }
+
+test('실제 엑셀 업로드는 공용 규칙으로 이름을 나누고 모호한 행을 저장·표시·워커까지 보류한다', async () => {
+  for (const vendor of ['보필', 'THKC']) {
+    const app = await screen(); app.render();
+    const book = new ExcelJS.Workbook();
+    const destinations = ['가상시 모의로 1_모의인', '가상시 모의로 1/모의인',
+      '가상시 모의로 1 /모의인', '가상시 모의로 1/ 모의인', '가상시 모의로 1 / 모의인',
+      '가상시 모의로 1, 모의인', '가상시 모의로 1 모의인',
+      '가상시 모의로 1 101동/102호 /모의인', '가상시 모의로 1 101동/102호',
+      '가상시 모의로 1', '가상시 모의로 1 /수취인확인필요'];
+    book.addWorksheet('발주').addRows([
+      ['주문번호', '납품처', '납품처전화번호', '품명', '주문수량', '비고(내역)'],
+      ...destinations.map((destination, i) => ['TEST-' + i, destination, '01000000000',
+        vendor === '보필' ? 'BFSH10' : 'DYJ-03', 1, '모의 비고'])]);
+    await app.context.screenActions.handleFile(new File([await book.xlsx.writeBuffer()], `20261116_직배(${vendor}) 모의.xlsx`));
+    app.render();
+    await app.context.screenActions.saveJob();
+    const saved = app.saved[0];
+    assert.equal(saved.rows.length, destinations.length);
+    const vendorId = vendor === '보필' ? 'bofeel' : 'eroum';
+    saved.rows.forEach((row, i) => {
+      const expected = splitDestination(destinations[i], vendorId);
+      assert.equal(row.recipientName, expected?.name ?? '', `${vendor} ${i}`);
+      assert.equal(row.address, expected?.address ?? destinations[i]);
+      assert.equal(row.status, expected ? 'READY' : 'HOLD');
+      assert.equal(row.reason, expected ? '' : DESTINATION_HOLD_REASON);
+      assert.equal(row.memo, '모의 비고');
+    });
+    assert.equal(saved.holdRows, vendor === '보필' ? 3 : 5);
+    assert.equal(saved.failedRows, 0);
+    const html = renderToStaticMarkup(React.createElement(app.context.OrderTable, { rows: saved.rows }));
+    assert.match(html, /납품처에서 수취인 이름을 확정할 수 없음/);
+    const held = saved.rows.filter(row => row.status === 'HOLD');
+    const result = await prepareHttpJob({ ...saved, rows: held }, { runVendor: () => assert.fail('사이트 접근 금지') });
+    for (const detail of result.details) assert.match(detail.reason, /납품처에서 수취인 이름을 확정할 수 없음/);
+  }
+});
 
 test('실제 업로드 핸들러는 두 시트 선택 전 저장을 막고 선택한 두 번째 시트만 저장한다', async () => {
   const app = await screen(); app.render();

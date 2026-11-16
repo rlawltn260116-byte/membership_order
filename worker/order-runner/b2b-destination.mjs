@@ -1,7 +1,24 @@
 const norm = (v) => String(v ?? "").normalize("NFC").replace(/\s+/g, " ").trim();
+export const DESTINATION_HOLD_REASON = "납품처에서 수취인 이름을 확정할 수 없음";
 export function splitDestination(value, vendor = "eroum") {
   const text = norm(value);
-  if (vendor === "bofeel" && !text.includes("_")) {
+  const underscore = text.lastIndexOf("_");
+  if (underscore >= 0) {
+    const address = text.slice(0, underscore).trim(), name = text.slice(underscore + 1).trim();
+    // 기존 밑줄 규칙을 우선한다. 이름 안 구분자는 중복 수취인일 수 있다.
+    if (!address || !name || name.length > 40 || /[_/\r\n]/.test(name)) return null;
+    return { name, address };
+  }
+  const slash = text.lastIndexOf("/");
+  if (slash > 0) {
+    const address = text.slice(0, slash).trim(), name = text.slice(slash + 1).trim();
+    // 주소 안 동/호 표기는 보존하고 마지막 구분자 뒤의 한글 이름만 확정한다.
+    if (address && /^[가-힣]{2,5}$/.test(name)) return { name, address };
+    // 이름처럼 적힌 불완전한 뒷부분을 끝 이름 규칙으로 다시 추측하지 않는다.
+    // 동/호 숫자·쉼표·닫는 괄호가 있으면 주소 일부일 수 있어 기존 보필 규칙으로 확인한다.
+    if (!/[\d,)]/.test(name)) return null;
+  }
+  if (vendor === "bofeel") {
     // 건물명 괄호 안 쉼표는 주소의 일부다. 수취인 구분자로 쓰지 않는다.
     let comma = -1, depth = 0;
     for (let i = 0; i < text.length; i++) {
@@ -18,14 +35,6 @@ export function splitDestination(value, vendor = "eroum") {
         !/\d/.test(address) || (address.match(/\(/g)?.length ?? 0) !== (address.match(/\)/g)?.length ?? 0)) return null;
     return { name, address };
   }
-  const underscore = text.lastIndexOf("_");
-  const slash = [...text.matchAll(/\s+\/\s+/g)].at(-1);
-  const index = underscore >= 0 ? underscore : slash?.index ?? -1;
-  const width = underscore >= 0 ? 1 : slash?.[0].length ?? 0;
-  if (index < 1) return null;
-  const address = text.slice(0, index).trim(), name = text.slice(index + width).trim();
-  // 구분자 잔여·중복 수취인·주소처럼 보이는 수취인은 자동 해석하지 않는다.
-  if (!address || !name || name.length > 40 || /[_/\r\n]/.test(name)) return null;
-  return { name, address };
+  return null;
 }
 

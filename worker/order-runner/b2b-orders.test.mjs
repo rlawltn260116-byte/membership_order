@@ -30,10 +30,24 @@ test("확인된 기본 상품만 정확히 연결한다", () => {
   assert.equal(mapProduct("eroum", row({ option: "회색" })).status, "HOLD");
 });
 
-test("마지막 밑줄 우선과 공백 슬래시 보조 규칙을 따른다", () => {
+test("마지막 밑줄 우선과 한글 이름 슬래시 규칙을 따른다", () => {
   assert.deepEqual(splitDestination("시험_주소_수취인"), { address: "시험_주소", name: "수취인" });
   assert.deepEqual(splitDestination("시험 / 주소 / 수취인"), { address: "시험 / 주소", name: "수취인" });
-  for (const text of ["주소만", "주소/이름", "주소_", "_이름", "주소_이름/다른이름"]) assert.equal(splitDestination(text), null);
+  assert.deepEqual(splitDestination("주소/이름"), { address: "주소", name: "이름" });
+  for (const text of ["주소만", "주소_", "_이름", "주소_이름/다른이름"]) assert.equal(splitDestination(text), null);
+});
+
+test("원본 납품처 슬래시를 계획에 연결하고 미확정 수취인 사유를 유지한다", () => {
+  const source = { ...row({ sourceSystem: '보필', productName: 'BFSH10', recipientName: '', address: '',
+    destination: '가상시 모의로 1 101동/102호 /모의인' }) };
+  const valid = planOrders(job([source]));
+  assert.equal(valid.rows[0].status, 'READY');
+  assert.equal(valid.rows[0].recipient.name, '모의인');
+  assert.equal(valid.rows[0].recipient.address, '가상시 모의로 1 101동/102호');
+  const invalid = planOrders(job([{ ...source, destination: '가상시 모의로 1 101동/102호' }]));
+  assert.equal(invalid.rows[0].status, 'HOLD');
+  assert.equal(invalid.rows[0].reason, '납품처에서 수취인 이름을 확정할 수 없음');
+  assert.equal(invalid.groups.length, 0);
 });
 
 test("같은 업체·수취인·연락처·주소인 행만 묶고 다른 배송지는 분리한다", () => {

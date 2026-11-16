@@ -1,4 +1,4 @@
-import { splitDestination } from "./b2b-destination.mjs";
+import { splitDestination, DESTINATION_HOLD_REASON } from "./b2b-destination.mjs";
 export { splitDestination } from "./b2b-destination.mjs";
 // 상품 연결·배송지별 준비 계획. 외부 요청과 고객정보 저장을 하지 않는다.
 import { readFileSync } from "node:fs";
@@ -94,8 +94,9 @@ export function normalizeRow(row, job, index) {
   let reason = "";
   if (!Number.isSafeInteger(lineNo) || lineNo < 1) reason = "원본 행 번호가 올바른 양의 정수가 아닙니다.";
   else if (!vendor) reason = "지원하지 않는 업체입니다.";
-  else if (row.status && row.status !== "READY") reason = "운영 페이지 검증에서 보류된 행입니다.";
-  else if (destination && (!parsed || (row.recipientName && parsed.name !== name) || (row.address && parsed.address !== originalAddress))) reason = "납품처와 구조화된 배송지가 모호하거나 서로 다릅니다.";
+  else if (row.status && row.status !== "READY") reason = row.reason || "운영 페이지 검증에서 보류된 행입니다.";
+  else if (destination && !parsed) reason = DESTINATION_HOLD_REASON;
+  else if (destination && ((row.recipientName && parsed.name !== name) || (row.address && parsed.address !== originalAddress))) reason = "납품처와 구조화된 배송지가 모호하거나 서로 다릅니다.";
   else if (!name || !address || !/^\d{9,11}$/.test(phone)) reason = "수취인·주소·연락처가 불명확합니다.";
   else if (!/^\d{5}$/.test(postcode)) reason = "검증된 우편번호를 입력해야 합니다. 원본 주소에서 추측하지 않습니다.";
   else if (!/^[1-9]\d*$/.test(quantity) || !Number.isSafeInteger(Number(quantity))) reason = "수량은 양의 정수여야 합니다.";

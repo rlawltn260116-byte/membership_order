@@ -1,7 +1,7 @@
 "use client";
 
 import { submissionContent } from "../worker/order-runner/order-approval.mjs";
-import { splitDestination } from "../worker/order-runner/b2b-destination.mjs";
+import { splitDestination, DESTINATION_HOLD_REASON } from "../worker/order-runner/b2b-destination.mjs";
 import { inspectWorkbook, selectWorksheet, worksheetMatrix, workbookProblem, duplicateOrderFiles, type SourceWorkbook } from "../worker/order-runner/workbook-policy.mjs";
 import type { Workbook } from "exceljs";
 import WorkbookSheetPicker from "./workbook-sheet-picker";
@@ -266,21 +266,6 @@ function compactHeader(value: unknown) {
   return workbookText(value).replace(/\s+/g, "");
 }
 
-function splitThkcDestination(value: string) {
-  const lastUnderscore = value.lastIndexOf("_");
-  if (lastUnderscore >= 0) {
-    return {
-      address: value.slice(0, lastUnderscore).trim(),
-      recipientName: value.slice(lastUnderscore + 1).trim(),
-    };
-  }
-  const slash = value.match(/\s+\/\s*([^/]+)$/);
-  if (slash?.index != null) {
-    return { address: value.slice(0, slash.index).trim(), recipientName: slash[1].trim() };
-  }
-  return { address: value, recipientName: "" };
-}
-
 function splitThkcProduct(value: string) {
   let depth = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -343,10 +328,7 @@ function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum") {
     const quantity = value("quantity");
     const memo = value("memo");
     if (![orderId, destination, phone, product, quantity].some(Boolean)) return;
-    const parsedDestination = vendor === "bofeel" ? splitDestination(destination, vendor) : null;
-    const { address, recipientName } = vendor === "bofeel"
-      ? { address: parsedDestination?.address ?? destination, recipientName: parsedDestination?.name ?? "" }
-      : splitThkcDestination(destination);
+    const parsedDestination = splitDestination(destination, vendor);
     const splitProduct = splitThkcProduct(product);
     parsed.push({
       __line_no: rowIndex + 1,
@@ -358,10 +340,11 @@ function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum") {
       quantity,
       expected_price: "",
       customer_name: vendor === "bofeel" ? "보필" : "티에이치케이컴퍼니",
-      recipient_name: recipientName,
+      recipient_name: parsedDestination?.name ?? "",
       recipient_phone: phone,
       zipcode: "",
-      address,
+      address: parsedDestination?.address ?? destination,
+      __destination_hold_reason: parsedDestination ? "" : DESTINATION_HOLD_REASON,
       address_detail: "",
       memo,
     });
@@ -395,8 +378,9 @@ function cell(row: Record<string, unknown>, key: string) {
 }
 
 function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
-  const missing = requiredColumns.filter((column) => !cell(raw, column));
-  const reasons: string[] = [];
+  const destinationHold = cell(raw, "__destination_hold_reason");
+  const missing = requiredColumns.filter((column) => !cell(raw, column) && !(destinationHold && column === "recipient_name"));
+  const reasons: string[] = destinationHold ? [destinationHold] : [];
   if (missing.length) reasons.push(`필수값 누락: ${missing.join(", ")}`);
 
   const quantity = cell(raw, "quantity");
@@ -452,7 +436,7 @@ function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
     address,
     addressDetail: cell(raw, "address_detail"),
     memo: cell(raw, "memo"),
-    status: reasons.length ? "FAILED" : "READY",
+    status: destinationHold ? "HOLD" : reasons.length ? "FAILED" : "READY",
     reason: reasons.join("; "),
   };
 }
