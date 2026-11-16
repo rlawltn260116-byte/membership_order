@@ -249,8 +249,8 @@ test("보필 다품목 주문은 모든 원장을 한번에 예약하고 각 행
   assert.deepEqual(events,[]);
 });
 
-test("같은 수취인의 미연결 상품을 제외한 부분 주문은 만들지 않는다", () => {
-  const plan=planOrders(job([row(),row({lineNo:2,productName:"미확인 상품"})]));
+test("발주처는 확인됐으나 사이트 미연결인 상품을 제외한 부분 주문은 만들지 않는다", () => {
+  const plan=planOrders(job([row(),row({lineNo:2,productName:"전동침대 NY(T)-2100 3모터"})]));
   assert.equal(plan.groups.length,0);
   assert(plan.rows.every(r=>r.status==="HOLD"));
 });

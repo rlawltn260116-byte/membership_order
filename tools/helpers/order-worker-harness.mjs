@@ -7,6 +7,7 @@ import { usesHttp, ledgerReservation } from '../../worker/order-runner/b2b-order
 import { submissionContent } from '../../worker/order-runner/order-approval.mjs';
 import { workbookProblem } from '../../worker/order-runner/workbook-policy.mjs';
 import { preparationDue, reservationProblem } from '../../worker/order-runner/schedule.mjs';
+import { isPartsOrder, PARTS_ORDER_LABEL } from '../../worker/order-runner/order-classification.mjs';
 
 export async function workerHarness(jobs, env, prepareHttpJob) {
   const source = await readFile('worker/order-runner/src/index.ts', 'utf8');
@@ -36,7 +37,7 @@ export async function workerHarness(jobs, env, prepareHttpJob) {
   }) };
   const context = vm.createContext({ process: { env }, Buffer, Date, createHash, randomUUID, timingSafeEqual, database,
     queuePath: 'jobs', workerId: '모의워커', now: () => new Date().toISOString(), usesHttp, ledgerReservation,
-    submissionContent, workbookProblem, preparationDue, reservationProblem, prepareHttpJob,
+    submissionContent, workbookProblem, preparationDue, reservationProblem, prepareHttpJob, isPartsOrder, PARTS_ORDER_LABEL,
     console: { log: () => {} }, chromium: { launch: () => { throw new Error('이 시험은 Playwright 실행 금지'); } },
     fetch: async (url, options) => {
       if (!url.startsWith('https://api.github.com/repos/mock/repo/contents/.github/order-submission-ledger.json')) throw new Error('실제 요청 금지');

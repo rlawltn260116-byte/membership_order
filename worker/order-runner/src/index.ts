@@ -7,10 +7,14 @@ import { prepareHttpJob } from "../b2b-queue.mjs";
 import { sourceRowKey, ledgerReservation, usesHttp } from "../b2b-orders.mjs";
 import { submissionContent } from "../order-approval.mjs";
 import { workbookProblem, type SourceWorkbook } from "../workbook-policy.mjs";
+import { isPartsOrder, PARTS_ORDER_LABEL } from "../order-classification.mjs";
+import { centerOrderContext, SITE_RECIPIENT_REQUIRED_REASON } from "../b2b-destination.mjs";
 
 type RowStatus = "READY" | "HOLD" | "FAILED";
 
 type OrderRow = {
+  sourceFile?: string;
+  orderKind?: string;
   sourceSheet?: string;
   lineNo?: number;
   sourceSystem?: string;
@@ -33,6 +37,7 @@ type OrderRow = {
 type ExecutionMode = "PREPARE" | "SUBMIT";
 
 type OrderJob = {
+  orderKind?: string;
   selectedSheet?: string;
   sourceWorkbook?: SourceWorkbook;
   filename?: string;
@@ -506,6 +511,8 @@ async function prepareEroumRow(page: Page, row: OrderRow, index: number, jobId: 
 
   const quantity = parsePositiveInteger(row.quantity);
   if (!quantity) return { lineNo, status: "HOLD", reason: "주문수량이 올바른 양의 정수가 아닙니다.", productId: mapping.productId };
+  const center = centerOrderContext({ filename: row.sourceFile ?? sourceJob.filename, memo: row.memo });
+  if (center.centerOrder && !row.recipientName) return { lineNo, status: "HOLD", reason: SITE_RECIPIENT_REQUIRED_REASON, productId: mapping.productId };
   if (!row.recipientName || !row.recipientPhone || !row.zipcode || !row.address) {
     return { lineNo, status: "HOLD", reason: "수취인, 연락처, 우편번호 또는 배송지가 누락되었습니다.", productId: mapping.productId };
   }
@@ -615,7 +622,9 @@ async function prepareReport(job: OrderJob, browser: Browser | null): Promise<Wo
 
   const scheduleProblem = !submitMode ? reservationProblem(job) : null;
   const sheetProblem = workbookProblem(job);
-  if (sheetProblem) {
+  if (isPartsOrder(job)) {
+    for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason: `${PARTS_ORDER_LABEL}: 자동 준비·제출 대상이 아닙니다.` });
+  } else if (sheetProblem) {
     for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason: sheetProblem });
   } else if (scheduleProblem) {
     for (const [index, row] of rows.entries()) details.push({ lineNo: row.lineNo ?? index + 1, status: "HOLD", reason: scheduleProblem });
@@ -725,7 +734,7 @@ async function runOnce() {
         if (job.executionMode === "SUBMIT") submittedJobAttempted = true;
         if (usesHttp(job)) {
           httpJobAttempted = true;
-        } else if (!browser && !workbookProblem(job)) browser = await chromium.launch({ headless: true });
+        } else if (!browser && !workbookProblem(job) && !isPartsOrder(job)) browser = await chromium.launch({ headless: true });
         const report = await prepareReport(job, browser);
         const submitMode = job.executionMode === "SUBMIT";
         const completed = submitMode && report.submittedRows === report.totalRows && report.failedRows === 0 && report.holdRows === 0;

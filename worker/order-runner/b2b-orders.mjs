@@ -1,4 +1,5 @@
-import { analyzeDestination } from "./b2b-destination.mjs";
+import { analyzeDestination, centerOrderContext, SITE_RECIPIENT_REQUIRED_REASON } from "./b2b-destination.mjs";
+import { classifyOrderRow, PARTS_ORDER_LABEL } from "./order-classification.mjs";
 export { splitDestination } from "./b2b-destination.mjs";
 // 상품 연결·배송지별 준비 계획. 외부 요청과 고객정보 저장을 하지 않는다.
 import { readFileSync } from "node:fs";
@@ -68,9 +69,12 @@ export function mapProduct(vendor, row) {
 
 
 export function normalizeRow(row, job, index) {
+  const classification = classifyOrderRow({ ...row, orderKind: job.orderKind ?? row.orderKind });
+  const context = { filename: row.sourceFile ?? job.filename ?? job.sourceFile, memo: row.memo ?? row["비고(내역)"] };
+  const center = centerOrderContext(context);
   const vendor = vendorFor(row.sourceSystem || job.sourceSystem);
   const destination = row.destination ?? row["납품처"];
-  const analysis = destination !== undefined ? analyzeDestination(destination, vendor) : null;
+  const analysis = destination !== undefined ? analyzeDestination(destination, vendor, context) : null;
   const parsed = analysis?.status === "READY" ? analysis : null;
   const name = norm(row.recipientName || parsed?.name);
   const originalAddress = norm(row.address || parsed?.address);
@@ -98,12 +102,15 @@ export function normalizeRow(row, job, index) {
   else if (row.status && row.status !== "READY") reason = row.reason || "운영 페이지 검증에서 보류된 행입니다.";
   else if (analysis && !parsed) reason = analysis.reason;
   else if (destination && ((row.recipientName && parsed.name !== name) || (row.address && parsed.address !== originalAddress))) reason = "납품처와 구조화된 배송지가 모호하거나 서로 다릅니다.";
-  else if (!name || !address || !/^\d{9,11}$/.test(phone)) reason = "수취인·주소·연락처가 불명확합니다.";
+  else if ((!name && !center.centerOrder) || !address || !/^\d{9,11}$/.test(phone)) reason = "수취인·주소·연락처가 불명확합니다.";
   else if (!/^\d{5}$/.test(postcode)) reason = "검증된 우편번호를 입력해야 합니다. 원본 주소에서 추측하지 않습니다.";
   else if (!/^[1-9]\d*$/.test(quantity) || !Number.isSafeInteger(Number(quantity))) reason = "수량은 양의 정수여야 합니다.";
   const mapped = mapProduct(vendor, row);
   if (mapped.status === "HOLD") reason = [reason, mapped.reason].filter(Boolean).join("; ");
   if (postcodeReason) reason = [reason, postcodeReason].filter(Boolean).join("; ");
+  // 저장된 두 업체 주문서 모두 수취인이 필수다. 센터 공란을 이름으로 채우지 않는다.
+  if (center.centerOrder && !name && vendor) reason = [SITE_RECIPIENT_REQUIRED_REASON, reason].filter(Boolean).join("; ");
+  if (classification.partsOrder) reason = PARTS_ORDER_LABEL;
   const recipient = { name, address, detail, phone, postcode, memo: String(row.memo ?? row["비고(내역)"] ?? "") };
   const originalFile = norm(row.sourceFile ?? job.filename ?? job.sourceFile);
   const file = originalFile.split(/[\\/]/).at(-1).replace(/\.[^.]+$/, "")
@@ -115,6 +122,7 @@ export function normalizeRow(row, job, index) {
     name, address, detail, phone, mapped.model ?? norm(row.productName ?? row["품명"]), mapped.optionId ?? norm(row.option), Number(quantity)])).digest("hex");
   const destinationSourceKey = createHash("sha256").update(JSON.stringify([vendor, name, originalAddress, norm(row.addressDetail), phone])).digest("hex");
   return { lineNo, sourceSheet: row.sourceSheet, vendor, orderId, quantity: Number(quantity), expectedPrice: row.expectedPrice ?? "", recipient, sourceKey, destinationSourceKey, mapping: mapped, postcodeDecision,
+    ...classification, ...center,
     ...(analysis ? { destination: analysis.originalDestination, normalizationNotes: analysis.normalizationNotes } : {}),
     status: reason ? "HOLD" : "READY", reason, reviewNotes: [...(mapped.reviewNotes ?? []), ...(postcodeReason ? [postcodeReason] : [])] };
 }
@@ -124,15 +132,16 @@ export function planOrders(job) {
   const problem = workbookProblem(job);
   if (problem) {
     for (const row of rows) { row.status = "HOLD"; row.reason = [problem, row.reason].filter(Boolean).join("; "); }
-    return { rows, groups: [] };
+    return { rows, groups: [], partsOrders: rows.filter(row => row.partsOrder) };
   }
   const counts = new Map();
   const lines = new Map();
   for (const row of rows) counts.set(row.sourceKey, (counts.get(row.sourceKey) ?? 0) + 1);
-  for (const row of rows) lines.set(row.lineNo, (lines.get(row.lineNo) ?? 0) + 1);
+  for (const row of rows.filter(row => !row.partsOrder)) lines.set(row.lineNo, (lines.get(row.lineNo) ?? 0) + 1);
   const groups = new Map();
   const destinationKey = row => JSON.stringify([row.vendor, row.recipient.name, row.recipient.address, row.recipient.detail, row.recipient.phone, row.recipient.postcode]);
   for (const row of rows) {
+    if (row.partsOrder) continue;
     if (counts.get(row.sourceKey) > 1) { row.status = "HOLD"; row.reason = "같은 원본 주문·상품 행이 중복되어 있습니다."; }
     if (lines.get(row.lineNo) > 1) { row.status = "HOLD"; row.reason = "같은 원본 행 번호가 중복되어 있습니다."; }
   }
@@ -142,12 +151,13 @@ export function planOrders(job) {
     resolvedBySource.get(row.destinationSourceKey).add(destinationKey(row));
   }
   for (const row of rows) {
+    if (row.partsOrder) continue;
     if (resolvedBySource.get(row.destinationSourceKey)?.size > 1) {
       row.status = "HOLD"; row.reason = "같은 원본 배송지의 우편번호·주소 확정 결과가 서로 다릅니다.";
     }
   }
-  const heldSources = new Set(rows.filter(row => row.status !== "READY").map(row => row.destinationSourceKey));
-  const heldDestinations = new Set(rows.filter(row => row.status !== "READY").map(destinationKey));
+  const heldSources = new Set(rows.filter(row => !row.partsOrder && row.status !== "READY").map(row => row.destinationSourceKey));
+  const heldDestinations = new Set(rows.filter(row => !row.partsOrder && row.status !== "READY").map(destinationKey));
   let changed = true;
   while (changed) {
     changed = false;
@@ -158,8 +168,9 @@ export function planOrders(job) {
       }
     }
   }
-  const destinationNotes = row => [...new Set(rows.filter(other => other.destinationSourceKey === row.destinationSourceKey || destinationKey(other) === destinationKey(row)).flatMap(other => other.reviewNotes))];
+  const destinationNotes = row => [...new Set(rows.filter(other => !other.partsOrder && (other.destinationSourceKey === row.destinationSourceKey || destinationKey(other) === destinationKey(row))).flatMap(other => other.reviewNotes))];
   for (const row of rows) {
+    if (row.partsOrder) continue;
     const notes = destinationNotes(row);
     row.reviewNotes = notes;
     if (row.status === "HOLD") row.reason = [row.reason, ...notes.filter(note => !row.reason.includes(note))].filter(Boolean).join("; ");
@@ -169,7 +180,7 @@ export function planOrders(job) {
       filename: job.filename, selectedSheet: job.selectedSheet, sourceWorkbook: job.sourceWorkbook, rows: [] });
     groups.get(key).rows.push(row);
   }
-  return { rows, groups: [...groups.values()] };
+  return { rows, groups: [...groups.values()], partsOrders: rows.filter(row => row.partsOrder) };
 }
 
 export function submissionProblem(job, env = process.env, time = Date.now()) {

@@ -5,7 +5,18 @@ export const RECIPIENT_ADDRESS_REASON = "납품처 끝이 주소 조각이라 �
 // 저장된 보필 주문서 receiverName의 maxlength. 이로움에는 확인된 제한이 없다.
 export const RECIPIENT_MAX_LENGTH = Object.freeze({ bofeel: 20 });
 
-export function analyzeDestination(value, vendor = "eroum") {
+export const CENTER_ORDER_LABEL = "센터 발주(수취인 생략)";
+export const SITE_RECIPIENT_REQUIRED_REASON = "사이트 주문서 수취인 필수: 센터 발주 수취인을 비워 제출할 수 없음(임의 보완 금지)";
+export function centerOrderContext(context = {}) {
+  const evidence = [];
+  const filename = String(context.sourceFile ?? context.filename ?? "").split(/[\\/]/).at(-1);
+  if (/센터|지사/.test(filename)) evidence.push("파일명에 센터·지사 포함");
+  if (/센터|지사/.test(String(context.memo ?? context["비고(내역)"] ?? ""))) evidence.push("비고(내역)에 센터·지사 포함");
+  return { centerOrder: evidence.length > 0, centerOrderEvidence: evidence };
+}
+
+export function analyzeDestination(value, vendor = "eroum", context = {}) {
+  const center = centerOrderContext(context);
   const originalDestination = String(value ?? "");
   const normalizationNotes = [];
   const note = (message) => { if (!normalizationNotes.includes(message)) normalizationNotes.push(message); };
@@ -46,11 +57,13 @@ export function analyzeDestination(value, vendor = "eroum") {
     if (name.endsWith("님")) { name = name.slice(0, -1).trim(); note("수취인 끝 호칭 님 제거"); }
   }
   let reason = "";
-  if (!text || (separator >= 0 && !name)) reason = RECIPIENT_EMPTY_REASON;
+  if (center.centerOrder && text && separator < 0 && !address) { address = text; name = ""; }
+  if (center.centerOrder && address && !name) { /* 센터 발주 수취인은 원본 공란 유지 */ }
+  else if (!text || (separator >= 0 && !name)) reason = RECIPIENT_EMPTY_REASON;
   else if (separator >= 0 && /^\(?\s*(?:지하\s*)?\d/.test(name)) reason = RECIPIENT_ADDRESS_REASON;
   else if (!address || !name || !balanced(name)) reason = DESTINATION_HOLD_REASON;
   else if (RECIPIENT_MAX_LENGTH[vendor] && name.length > RECIPIENT_MAX_LENGTH[vendor]) reason = `수취인 길이가 사이트 제한 ${RECIPIENT_MAX_LENGTH[vendor]}자를 초과함`;
-  return { status: reason ? "HOLD" : "READY", name, address, reason, originalDestination, normalizationNotes };
+  return { status: reason ? "HOLD" : "READY", name, address, reason, originalDestination, normalizationNotes, ...center };
 }
 
 // 기존 호출부의 null 계약은 유지하고 상세 사유·원문은 analyzeDestination에서 제공한다.

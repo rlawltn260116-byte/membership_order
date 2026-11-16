@@ -1,7 +1,8 @@
 "use client";
 
 import { submissionContent } from "../worker/order-runner/order-approval.mjs";
-import { analyzeDestination } from "../worker/order-runner/b2b-destination.mjs";
+import { analyzeDestination, centerOrderContext } from "../worker/order-runner/b2b-destination.mjs";
+import { classifyOrderRow, partitionOrderRows, isPartsOrder, PARTS_ORDER_LABEL, PARTS_ORDER_KIND } from "../worker/order-runner/order-classification.mjs";
 import { inspectWorkbook, selectWorksheet, worksheetMatrix, workbookProblem, duplicateOrderFiles, type SourceWorkbook } from "../worker/order-runner/workbook-policy.mjs";
 import type { Workbook } from "exceljs";
 import WorkbookSheetPicker from "./workbook-sheet-picker";
@@ -63,6 +64,12 @@ import { createOrderJob, getOrderJob, listOrderJobs, updateOrderJob } from "@/li
 import InventoryRegistrationPage from "./inventory-registration-page";
 
 type OrderRow = {
+  sourceFile?: string;
+  orderKind?: string;
+  supplier?: string;
+  supplierEvidence?: string;
+  centerOrder?: boolean;
+  centerOrderEvidence?: string[];
   destination?: string;
   normalizationNotes?: string[];
   postcodeSearchResponse?: unknown;
@@ -87,6 +94,7 @@ type OrderRow = {
 };
 
 type Job = {
+  orderKind?: string;
   selectedSheet?: string;
   sourceWorkbook?: SourceWorkbook;
   scheduledPreparation?: { runAt: string; receiptDeadlineAt: string; method: string } | null;
@@ -299,7 +307,7 @@ function parseGenericWorkbookRows(matrix: unknown[][]) {
     .filter((row) => Object.entries(row).some(([key, value]) => key !== "__line_no" && workbookText(value)));
 }
 
-function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum") {
+function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum", filename = "") {
   const headerBlocks = new Map<number, Record<string, number>>();
   matrix.slice(0, 25).forEach((row, rowIndex) => {
     const mapping: Record<string, number> = {};
@@ -330,7 +338,7 @@ function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum") {
     const quantity = value("quantity");
     const memo = value("memo");
     if (![orderId, destination, phone, product, quantity].some(Boolean)) return;
-    const destinationAnalysis = analyzeDestination(destination, vendor);
+    const destinationAnalysis = analyzeDestination(destination, vendor, { filename, memo });
     const parsedDestination = destinationAnalysis.status === "READY" ? destinationAnalysis : null;
     const splitProduct = splitThkcProduct(product);
     parsed.push({
@@ -350,6 +358,8 @@ function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum") {
       __destination_original: destination,
       __destination_normalization_notes: destinationAnalysis.normalizationNotes,
       __destination_hold_reason: destinationAnalysis.reason,
+      __center_order: destinationAnalysis.centerOrder,
+      __center_order_evidence: destinationAnalysis.centerOrderEvidence,
       address_detail: "",
       memo,
     });
@@ -368,13 +378,23 @@ async function loadXlsx(file: File) {
 function parseXlsx(workbook: Workbook, filename: string, selectedSheet: string) {
   const sheet = selectWorksheet(workbook, selectedSheet);
   const matrix = worksheetMatrix(sheet);
-  const rows = parseThkcWorkbookRows(matrix, /보필/.test(filename) ? "bofeel" : "eroum");
+  const rows = parseThkcWorkbookRows(matrix, /보필/.test(filename) ? "bofeel" : "eroum", filename);
   const parsed = rows.length ? rows : parseGenericWorkbookRows(matrix);
   if (!parsed.length) {
     throw new Error("지원되는 주문 열을 찾지 못했습니다. THKC 발주서 또는 주문 엑셀 양식을 확인해 주세요.");
   }
   if (parsed.length > 5000) throw new Error("한 파일에서 처리할 수 있는 주문은 최대 5,000건입니다.");
-  return parsed.map(row => ({ ...row, source_sheet: sheet.name }));
+  return parsed.map((row: Record<string, unknown>) => {
+    // 일반 열 양식도 같은 센터 예외·원문 보존 규칙을 적용한다.
+    const analysis = row.__destination_original === undefined && row.destination !== undefined ?
+      analyzeDestination(String(row.destination), /보필/.test(filename) ? "bofeel" : "eroum", { filename, memo: String(row.memo ?? "") }) : null;
+    const center = centerOrderContext({ filename, memo: String(row.memo ?? "") });
+    return { ...row, __center_order: center.centerOrder, __center_order_evidence: center.centerOrderEvidence,
+      ...(analysis ? { __destination_original: analysis.originalDestination,
+      __destination_hold_reason: analysis.reason, __destination_normalization_notes: analysis.normalizationNotes,
+      recipient_name: analysis.name, address: analysis.address, __center_order: analysis.centerOrder,
+      __center_order_evidence: analysis.centerOrderEvidence } : {}), source_sheet: sheet.name, source_file: filename };
+  });
 }
 
 function cell(row: Record<string, unknown>, key: string) {
@@ -384,7 +404,9 @@ function cell(row: Record<string, unknown>, key: string) {
 
 function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
   const destinationHold = cell(raw, "__destination_hold_reason");
-  const missing = requiredColumns.filter((column) => !cell(raw, column) && !(destinationHold && column === "recipient_name"));
+  const centerOrder = Boolean(raw.__center_order);
+  const classification = classifyOrderRow({ productName: cell(raw, "product_name") });
+  const missing = requiredColumns.filter((column) => !cell(raw, column) && !((destinationHold || centerOrder) && column === "recipient_name"));
   const reasons: string[] = destinationHold ? [destinationHold] : [];
   if (missing.length) reasons.push(`필수값 누락: ${missing.join(", ")}`);
 
@@ -425,6 +447,10 @@ function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
   }
 
   return {
+    ...classification,
+    sourceFile: cell(raw, "source_file"),
+    centerOrder,
+    centerOrderEvidence: (raw.__center_order_evidence ?? []) as string[],
     ...(raw.__destination_original !== undefined ? {
       destination: String(raw.__destination_original),
       normalizationNotes: raw.__destination_normalization_notes as string[],
@@ -445,8 +471,8 @@ function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
     address,
     addressDetail: cell(raw, "address_detail"),
     memo: cell(raw, "memo"),
-    status: destinationHold ? "HOLD" : reasons.length ? "FAILED" : "READY",
-    reason: reasons.join("; "),
+    status: classification.partsOrder || destinationHold ? "HOLD" : reasons.length ? "FAILED" : "READY",
+    reason: [classification.partsOrder ? PARTS_ORDER_LABEL : "", ...reasons].filter(Boolean).join("; "),
   };
 }
 
@@ -759,7 +785,9 @@ export default function OrderOpsApp() {
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [jobSearch, setJobSearch] = useState("");
   const [jobFilter, setJobFilter] = useState("all");
+  const partsJobs = jobs.filter(job => job.orderKind === PARTS_ORDER_KIND);
   const visibleJobs = jobs.filter((job) => {
+    if (job.orderKind === PARTS_ORDER_KIND) return false;
     const matchesChannel = !selectedChannel || normalizeChannelName(job.sourceSystem) === selectedChannel;
     const matchesSearch = `${job.filename} ${job.sourceSystem} ${(job.rows ?? []).map((row) => `${row.orderId} ${row.productName} ${row.recipientName}`).join(" ")}`.toLowerCase().includes(jobSearch.toLowerCase());
     const matchesStatus = jobFilter === "all" || (jobFilter === "completed" ? job.status === "COMPLETED" : ["READY", "AWAITING_REVIEW", "REVIEWED", "QUEUED", "SUBMIT_QUEUED", "RUNNING"].includes(job.status));
@@ -881,32 +909,38 @@ export default function OrderOpsApp() {
     setLoading(true);
     try {
       const now = new Date().toISOString();
-      const readyRows = previewRows.filter((row) => row.status === "READY").length;
-      const holdRows = previewRows.filter((row) => row.status === "HOLD").length;
-      const failedRows = previewRows.filter((row) => row.status === "FAILED").length;
-      const job = await createOrderJob({
-        filename,
-        selectedSheet,
-        sourceWorkbook,
-        sourceSystem: previewRows[0]?.sourceSystem || "미지정",
-        status: failedRows ? "FAILED" : holdRows ? "HOLD" : "READY",
-        totalRows: previewRows.length,
-        readyRows,
-        holdRows,
-        failedRows,
-        createdByName: "주문 운영자",
-        createdByEmail: "",
-        updatedByName: "주문 운영자",
-        updatedByEmail: "",
-        createdAt: now,
-        updatedAt: now,
-        rows: previewRows,
-        auditLogs: [{ id: `${Date.now()}-created`, jobId: "", action: "ORDER_CREATED", actorName: "주문 운영자", actorEmail: "", detail: `${filename} 주문 ${previewRows.length}건 접수`, createdAt: now }],
-      });
+      const { normalRows, partsRows } = partitionOrderRows(previewRows);
+      let job: { id: string } | undefined;
+      for (const batch of [normalRows, partsRows].filter(batch => batch.length)) {
+        const parts = batch === partsRows;
+        const readyRows = batch.filter((row) => row.status === "READY").length;
+        const holdRows = batch.filter((row) => row.status === "HOLD").length;
+        const failedRows = batch.filter((row) => row.status === "FAILED").length;
+        job = await createOrderJob({
+          filename,
+          orderKind: parts ? PARTS_ORDER_KIND : "STANDARD",
+          selectedSheet,
+          sourceWorkbook,
+          sourceSystem: parts ? PARTS_ORDER_LABEL : batch[0]?.sourceSystem || "미지정",
+          status: failedRows ? "FAILED" : holdRows ? "HOLD" : "READY",
+          totalRows: batch.length,
+          readyRows,
+          holdRows,
+          failedRows,
+          createdByName: "주문 운영자",
+          createdByEmail: "",
+          updatedByName: "주문 운영자",
+          updatedByEmail: "",
+          createdAt: now,
+          updatedAt: now,
+          rows: batch,
+          auditLogs: [{ id: `${Date.now()}-created`, jobId: "", action: "ORDER_CREATED", actorName: "주문 운영자", actorEmail: "", detail: `${filename} 주문 ${batch.length}건 접수`, createdAt: now }],
+        });
+      }
       setMessage("클라우드 작업으로 저장했습니다.");
       setPreviewRows([]);
       await loadJobs();
-      await openJob(String(job.id));
+      if (job) await openJob(String(job.id));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "저장 오류");
     } finally {
@@ -916,6 +950,7 @@ export default function OrderOpsApp() {
 
   async function queueExecution(reserve = false) {
     if (!activeJob) return;
+    if (isPartsOrder(activeJob)) { setMessage(`${PARTS_ORDER_LABEL}: 자동 준비·제출 대상이 아닙니다.`); return; }
     const problem = workbookProblem(activeJob);
     if (problem) { setMessage(problem); return; }
     setLoading(true);
@@ -976,6 +1011,7 @@ export default function OrderOpsApp() {
   }
 
   async function queueFinalSubmission(approvalCode: string) {
+    if (isPartsOrder(activeJob)) { setMessage(`${PARTS_ORDER_LABEL}: 자동 준비·제출 대상이 아닙니다.`); return; }
     if (workbookProblem(activeJob)) return;
     if (!activeJob?.report || activeJob.status !== "REVIEWED" || activeJob.dashboardReview?.decision !== "ACCEPTED") return;
     if (activeJob.report.failedRows > 0 || activeJob.report.holdRows > 0 || activeJob.report.successRows !== activeJob.report.totalRows) return;
@@ -1039,7 +1075,7 @@ export default function OrderOpsApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeJob?.id]);
 
-  const currentTitle = activeJob ? activeJob.filename : filename || "새 주문 파일";
+  const currentTitle = activeJob ? `${activeJob.orderKind === PARTS_ORDER_KIND ? PARTS_ORDER_LABEL + ' · ' : ''}${activeJob.filename}` : filename || "새 주문 파일";
   const sheetProblem = workbookProblem(activeJob ?? { filename, selectedSheet, sourceWorkbook, rows: previewRows });
   const duplicateFiles = duplicateOrderFiles(activeJob ?? { filename, sourceSystem: previewRows[0]?.sourceSystem }, jobs);
 
@@ -1119,6 +1155,11 @@ export default function OrderOpsApp() {
               <p className="mt-3 text-xs text-slate-400">{selectedChannel || "전체 채널"} · {visibleJobs.length}개 작업</p>
               <select aria-label="주문 채널 필터" className="mt-3 w-full rounded-lg border border-slate-200 bg-white p-2 text-sm text-slate-600 lg:hidden" value={selectedChannel || ""} onChange={(event) => setSelectedChannel(event.target.value || null)}><option value="">전체 채널</option>{orderChannelGroups.map((group) => <optgroup key={group.title} label={group.title}>{group.items.map((channel) => <option key={channel} value={channel}>{channel}</option>)}</optgroup>)}</select>
             </div>
+            <section aria-label={PARTS_ORDER_LABEL} className="border-b border-amber-200 bg-amber-50 p-4">
+              <h3 className="text-sm font-semibold">{PARTS_ORDER_LABEL}</h3>
+              <p className="mt-1 text-xs text-amber-900">보류 · 자동 준비·제출 제외 · {partsJobs.length}개 작업</p>
+              {partsJobs.map(job => <button key={job.id} className="mt-3 block w-full rounded-lg border border-amber-200 bg-white p-3 text-left text-sm" onClick={() => void openJob(job.id)}>{job.filename}<span className="mt-1 block text-xs text-slate-500">{job.totalRows}행 · 보류</span></button>)}
+            </section>
             <div className="max-h-[760px] overflow-auto">
               {visibleJobs.length === 0 ? (
                 <div className="rounded-md border border-dashed border-slate-300 p-4 text-sm text-slate-600">
@@ -1157,8 +1198,8 @@ export default function OrderOpsApp() {
                     클라우드 저장
                   </Button>
                 ) : (
-                  <><Button variant="outline" onClick={() => void queueExecution(true)} disabled={Boolean(sheetProblem) || process.env.NEXT_PUBLIC_ENABLE_ORDER_PREPARATION_SCHEDULING !== "true" || !activeJob || !nextPreparation(activeJob.sourceSystem) || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>시간표로 준비 예약 (기본 꺼짐)</Button>
-                  <Button onClick={() => void queueExecution()} disabled={Boolean(sheetProblem) || !activeJob || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>
+                  <><Button variant="outline" onClick={() => void queueExecution(true)} disabled={isPartsOrder(activeJob) || Boolean(sheetProblem) || process.env.NEXT_PUBLIC_ENABLE_ORDER_PREPARATION_SCHEDULING !== "true" || !activeJob || !nextPreparation(activeJob.sourceSystem) || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>시간표로 준비 예약 (기본 꺼짐)</Button>
+                  <Button onClick={() => void queueExecution()} disabled={isPartsOrder(activeJob) || Boolean(sheetProblem) || !activeJob || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>
                     <PlayCircle className="h-4 w-4" />
                     서버 준비 요청
                   </Button></>
@@ -1181,7 +1222,7 @@ export default function OrderOpsApp() {
                 <TabsTrigger value="audit">작업 로그</TabsTrigger>
               </TabsList>
               <TabsContent value="rows" className="mt-4">
-                {rows.length ? <div className="space-y-4">{rows.map((row, index) => <article key={`${row.lineNo}-${index}`} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs text-slate-400">{row.sourceSystem} · 원본 {row.lineNo}행</p><h3 className="mt-2 font-semibold">{row.productName}</h3>{row.option ? <p className="mt-1 text-sm text-slate-500">{row.option}</p> : null}</div><Badge className={statusClass(row.status)}>{statusLabel(row.status)}</Badge></div><dl className="mt-4 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-3 border-t border-slate-100 pt-4 text-sm"><dt className="text-slate-400">원주문번호</dt><dd className="break-all">{row.orderId || "-"}</dd><dt className="text-slate-400">수량</dt><dd>{row.quantity}개</dd><dt className="text-slate-400">수취인</dt><dd>{row.recipientName || "-"}<span className="mt-1 block text-xs text-slate-500">{row.recipientPhone}</span></dd><dt className="text-slate-400">배송지</dt><dd className="break-words leading-6">{row.address} {row.addressDetail}</dd><dt className="text-slate-400">배송 메모</dt><dd className="break-words">{row.memo || "-"}</dd>{row.reason ? <><dt className="text-slate-400">검증 사유</dt><dd className="leading-6">{row.reason}</dd></> : null}</dl></article>)}</div> : <EmptyState />}
+                {rows.length ? <div className="space-y-4">{rows.map((row, index) => <article key={`${row.lineNo}-${index}`} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs text-slate-400">{row.sourceSystem} · 원본 {row.lineNo}행</p><h3 className="mt-2 font-semibold">{row.productName}</h3>{row.option ? <p className="mt-1 text-sm text-slate-500">{row.option}</p> : null}</div><Badge className={statusClass(row.status)}>{statusLabel(row.status)}</Badge></div><dl className="mt-4 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-3 border-t border-slate-100 pt-4 text-sm"><dt className="text-slate-400">원주문번호</dt><dd className="break-all">{row.orderId || "-"}</dd><dt className="text-slate-400">수량</dt><dd>{row.quantity}개</dd><dt className="text-slate-400">수취인</dt><dd>{row.centerOrder ? "센터 발주(수취인 생략)" : row.recipientName || "-"}{row.centerOrder ? <span className="mt-1 block text-xs text-slate-500">{row.centerOrderEvidence?.join(" · ")}</span> : null}<span className="mt-1 block text-xs text-slate-500">{row.recipientPhone}</span></dd><dt className="text-slate-400">배송지</dt><dd className="break-words leading-6">{row.address} {row.addressDetail}</dd><dt className="text-slate-400">배송 메모</dt><dd className="break-words">{row.memo || "-"}</dd>{row.reason ? <><dt className="text-slate-400">검증 사유</dt><dd className="leading-6">{row.reason}</dd></> : null}</dl></article>)}</div> : <EmptyState />}
               </TabsContent>
               <TabsContent value="review" className="mt-4">
                 <WorkerReviewPanel
@@ -2208,7 +2249,8 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
               </TableCell>
               <TableCell>{row.quantity || "-"}</TableCell>
               <TableCell>
-                {row.recipientName || "-"}
+                {row.centerOrder ? "센터 발주(수취인 생략)" : row.recipientName || "-"}
+                {row.centerOrder ? <div className="text-xs text-slate-500">{row.centerOrderEvidence?.join(" · ")}</div> : null}
                 <div className="text-xs text-slate-500">{row.recipientPhone}</div>
               </TableCell>
               <TableCell className="max-w-[260px] whitespace-normal">

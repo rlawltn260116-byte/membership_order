@@ -16,8 +16,9 @@ import { PassThrough, Writable } from 'node:stream';
 import ExcelJS from 'exceljs';
 import * as policy from '../worker/order-runner/workbook-policy.mjs';
 import * as schedule from '../worker/order-runner/schedule.mjs';
-import { splitDestination, analyzeDestination, DESTINATION_HOLD_REASON } from '../worker/order-runner/b2b-destination.mjs';
+import { splitDestination, analyzeDestination, centerOrderContext, DESTINATION_HOLD_REASON } from '../worker/order-runner/b2b-destination.mjs';
 import { submissionContent } from '../worker/order-runner/order-approval.mjs';
+import * as classification from '../worker/order-runner/order-classification.mjs';
 import { prepareHttpJob, runQueueVendor } from '../worker/order-runner/b2b-queue.mjs';
 import { workerHarness } from './helpers/order-worker-harness.mjs';
 
@@ -31,9 +32,9 @@ async function screen() {
     if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
     return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }];
   };
-  const context = { React, ExcelJS, console, window: { crypto: webcrypto }, TextEncoder, process: { env: {} }, ...policy, ...schedule, splitDestination, analyzeDestination, DESTINATION_HOLD_REASON, submissionContent,
+  const context = { React, ExcelJS, console, window: { crypto: webcrypto }, TextEncoder, process: { env: {} }, ...policy, ...schedule, ...classification, splitDestination, analyzeDestination, centerOrderContext, DESTINATION_HOLD_REASON, submissionContent,
     useState: state, useRef: initial => state(() => ({ current: initial }))[0], useMemo: fn => fn(), useEffect: () => {},
-    createOrderJob: async value => { const job = { ...value, id: 'saved' }; saved.push(job); return job; },
+    createOrderJob: async value => { const job = { ...value, id: saved.length ? `saved-${saved.length + 1}` : 'saved' }; saved.push(job); return job; },
     listOrderJobs: async () => saved,
     getOrderJob: async id => saved.find(job => job.id === id),
     updateOrderJob: async (...args) => { writes.push(args); Object.assign(saved.find(job => job.id === args[0]), args[1]); return null; },
@@ -75,6 +76,57 @@ async function file(sheets) {
   }
   return new File([await book.xlsx.writeBuffer()], '20261112_직배(보필) 모의.xlsx');
 }
+
+test('센터 업로드는 수취인 공란을 허용하고 미정 부품을 별도 보류 작업으로 저장·표시·실행 차단한다', async () => {
+  const app = await screen(); app.render();
+  const book = new ExcelJS.Workbook();
+  book.addWorksheet('발주').addRows([
+    ['주문번호', '납품처', '납품처전화번호', '품명', '주문수량', '비고(내역)'],
+    ['', '가상시 모의로 1 /', '01000000000', 'BFSH10', 1, '가상 비고'],
+    ['', '가상시 모의로 1 /', '01000000000', '모의 브레이크 캡', 30, '가상지사 원문 비고'],
+    ['', '가상시 모의로 1 / 가상센터', '01000000000', '모의 발걸이띠', 5, '가상 비고'],
+  ]);
+  await app.context.screenActions.handleFile(new File([await book.xlsx.writeBuffer()], '20261116_직배(가상센터) 모의.xlsx'));
+  app.render();
+  await app.context.screenActions.saveJob();
+  assert.equal(app.saved.length, 2);
+  const normal = app.saved.find(value => value.orderKind === 'STANDARD');
+  const parts = app.saved.find(value => value.orderKind === classification.PARTS_ORDER_KIND);
+  assert.equal(normal.totalRows, 1);
+  assert.equal(normal.rows[0].status, 'READY');
+  assert.equal(normal.rows[0].recipientName, '');
+  assert.equal(normal.rows[0].centerOrder, true);
+  assert.equal(parts.totalRows, 2);
+  assert.equal(parts.status, 'HOLD');
+  assert.equal(parts.readyRows, 0);
+  assert.equal(parts.holdRows, 2);
+  assert.equal(parts.rows[0].memo, '가상지사 원문 비고');
+  assert.equal(parts.rows[0].sourceFile, '20261116_직배(가상센터) 모의.xlsx');
+  assert.equal(parts.sourceSystem, classification.PARTS_ORDER_LABEL);
+  app.render();
+  await app.context.screenActions.queueExecution();
+  await app.context.screenActions.queueExecution(true);
+  await app.context.screenActions.queueFinalSubmission('모의승인');
+  assert.equal(app.writes.length, 0);
+  const tree = app.render();
+  assert.equal(app.button(tree, '서버 준비 요청').props.disabled, true);
+  assert.ok(renderToStaticMarkup(tree).includes('aria-label="부품 주문(발주처 미정)"'));
+  const markup = renderToStaticMarkup(React.createElement(app.context.OrderTable, { rows: parts.rows }));
+  assert.ok(markup.includes('센터 발주(수취인 생략)'));
+  assert.ok(markup.includes('파일명에 센터·지사 포함'));
+});
+
+test('미정 부품 작업이 잘못 큐에 들어와도 워커는 외부 준비를 호출하지 않는다', async () => {
+  const filename = '20261116_직배(가상센터) 모의.xlsx';
+  const jobs = { parts: { id: 'parts', filename, orderKind: classification.PARTS_ORDER_KIND, sourceSystem: classification.PARTS_ORDER_LABEL,
+    status: 'QUEUED', selectedSheet: '발주', sourceWorkbook: { filename, sheets: [{ name: '발주', state: 'visible' }] },
+    rows: [{ lineNo: 2, sourceSheet: '발주', productName: '모의 부품', quantity: 1, status: 'HOLD' }] } };
+  const worker = await workerHarness(jobs, {}, () => assert.fail('부품 외부 준비 금지'));
+  await worker.run();
+  assert.equal(jobs.parts.report.canSubmit, false);
+  assert.equal(jobs.parts.report.holdRows, 1);
+  assert.ok(jobs.parts.report.details[0].reason.includes(classification.PARTS_ORDER_LABEL));
+});
 
 test('실제 엑셀 업로드는 공용 규칙으로 이름을 나누고 모호한 행을 저장·표시·워커까지 보류한다', async () => {
   for (const vendor of ['보필', 'THKC']) {

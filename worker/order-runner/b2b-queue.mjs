@@ -7,6 +7,8 @@ import { planOrders, submitOnePrepared, submissionProblem, httpSubmitAllowed, ve
 import { bofeelPostcodeKeyword } from "./bofeel-postcode.mjs";
 import { workbookProblem } from "./workbook-policy.mjs";
 import { lookupBofeelPostcodes } from "./b2b-postcode-lookup.mjs";
+import { classifyOrderRow, isPartsOrder } from "./order-classification.mjs";
+import { analyzeDestination, centerOrderContext } from "./b2b-destination.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const safeDetail = (value) => ({ lineNo: value.lineNo, status: value.status, reason: value.reason,
@@ -95,8 +97,11 @@ export async function runQueueVendor(vendor, groups, { env = process.env, spawn 
 export async function prepareHttpJob(job, { env = process.env, runVendor = runQueueVendor, lookupPostcodes = lookupBofeelPostcodes, reserveLedger, lockRow, record } = {}) {
   let preparedRows;
   // 우편번호 보완은 PREPARE에서만 한다. 결과는 작업 행에 저장되어 내용 승인에 묶인다.
-  if (job.executionMode !== "SUBMIT" && env.ENABLE_B2B_HTTP_CART === "true" && !workbookProblem(job) && job.rows?.length <= 30) {
+  if (!isPartsOrder(job) && job.executionMode !== "SUBMIT" && env.ENABLE_B2B_HTTP_CART === "true" && !workbookProblem(job) && job.rows?.length <= 30) {
     const keywordFor = row => vendorFor(row.sourceSystem || job.sourceSystem) === "bofeel" &&
+      !classifyOrderRow(row).partsOrder &&
+      !(centerOrderContext({ filename: row.sourceFile ?? job.filename, memo: row.memo }).centerOrder &&
+        !String(row.recipientName || analyzeDestination(row.destination, "bofeel", { filename: row.sourceFile ?? job.filename, memo: row.memo }).name)) &&
       (!row.status || row.status === "READY") && !row.zipcode && row.postcodeSearchResponse === undefined
       ? bofeelPostcodeKeyword(row.address || splitDestination(row.destination, "bofeel")?.address || "") : null;
     const keywords = [...new Set(job.rows.map(keywordFor).filter(Boolean))];
@@ -141,7 +146,9 @@ export async function prepareHttpJob(job, { env = process.env, runVendor = runQu
   for (const detail of details) {
     const row = plan.rows.find(row => row.lineNo === detail.lineNo);
     if (row) Object.assign(detail, { productId: row.mapping.productId || "", optionName: row.mapping.optionName || (row.mapping.status === "READY" ? "기본 옵션" : "옵션 미확정"),
-      quantity: row.quantity, postcodeDecision: row.postcodeDecision, normalizationNotes: row.normalizationNotes ?? [] });
+      quantity: row.quantity, postcodeDecision: row.postcodeDecision, normalizationNotes: row.normalizationNotes ?? [],
+      centerOrder: row.centerOrder, centerOrderEvidence: row.centerOrderEvidence, orderKind: row.orderKind,
+      supplier: row.supplier, supplierEvidence: row.supplierEvidence });
   }
   return { details: details.sort((a, b) => a.lineNo - b.lineNo), canSubmit, ...(preparedRows ? { preparedRows } : {}) };
 }
