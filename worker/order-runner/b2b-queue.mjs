@@ -114,7 +114,7 @@ export async function prepareHttpJob(job, { env = process.env, runVendor = runQu
   if (job.executionMode === "SUBMIT") {
     const problem = submissionProblem(job, env);
     if (problem) return { canSubmit: false, details: plan.rows.map((r) => ({ lineNo: r.lineNo, status: "HOLD",
-      reason: [problem, r.reason].filter(Boolean).join("; "), reviewNotes: r.reviewNotes })) };
+      reason: [problem, r.reason].filter(Boolean).join("; "), reviewNotes: r.reviewNotes, normalizationNotes: r.normalizationNotes ?? [] })) };
   }
   const details = plan.rows.filter((r) => r.status === "HOLD").map((r) => ({ lineNo: r.lineNo, status: "HOLD", reason: r.reason, reviewNotes: r.reviewNotes }));
   let canSubmit = false;
@@ -141,7 +141,7 @@ export async function prepareHttpJob(job, { env = process.env, runVendor = runQu
   for (const detail of details) {
     const row = plan.rows.find(row => row.lineNo === detail.lineNo);
     if (row) Object.assign(detail, { productId: row.mapping.productId || "", optionName: row.mapping.optionName || (row.mapping.status === "READY" ? "기본 옵션" : "옵션 미확정"),
-      quantity: row.quantity, postcodeDecision: row.postcodeDecision });
+      quantity: row.quantity, postcodeDecision: row.postcodeDecision, normalizationNotes: row.normalizationNotes ?? [] });
   }
   return { details: details.sort((a, b) => a.lineNo - b.lineNo), canSubmit, ...(preparedRows ? { preparedRows } : {}) };
 }

@@ -1,49 +1,63 @@
 const norm = (v) => String(v ?? "").normalize("NFC").replace(/\s+/g, " ").trim();
 export const DESTINATION_HOLD_REASON = "납품처에서 수취인 이름을 확정할 수 없음";
-// 한글 이름 후보 끝 내부 표기 한 글자만 제거하며 원문은 보존한다.
-const recipient = (candidate) => candidate.replace(/^([가-힣]+)[Dd]$/, "$1");
-const result = (candidate, address) => {
-  const name = recipient(candidate);
-  return { name, address, ...(name !== candidate ? { normalizationNotes: ["수취인 끝 내부 표기 D 제거"] } : {}) };
-};
-export function splitDestination(value, vendor = "eroum") {
-  const text = norm(value);
-  const underscore = text.lastIndexOf("_");
-  if (underscore >= 0) {
-    const address = text.slice(0, underscore).trim(), candidate = text.slice(underscore + 1).trim();
-    const name = recipient(candidate);
-    // 기존 밑줄 규칙을 우선한다. 이름 안 구분자는 중복 수취인일 수 있다.
-    if (!address || !name || name.length > 40 || /[_/\r\n]/.test(name)) return null;
-    return result(candidate, address);
+export const RECIPIENT_EMPTY_REASON = "수취인 없음";
+export const RECIPIENT_ADDRESS_REASON = "납품처 끝이 주소 조각이라 수취인을 확정할 수 없음";
+// 저장된 보필 주문서 receiverName의 maxlength. 이로움에는 확인된 제한이 없다.
+export const RECIPIENT_MAX_LENGTH = Object.freeze({ bofeel: 20 });
+
+export function analyzeDestination(value, vendor = "eroum") {
+  const originalDestination = String(value ?? "");
+  const normalizationNotes = [];
+  const note = (message) => { if (!normalizationNotes.includes(message)) normalizationNotes.push(message); };
+  const clean = (value) => {
+    const trimmed = value.trim();
+    const cleaned = trimmed.replace(/^["\s]+|["\s]+$/g, "").trim();
+    if (cleaned !== trimmed || /^\s*\t|\t\s*$/.test(value)) note("납품처 앞뒤 탭·큰따옴표 제거");
+    return cleaned;
+  };
+  const text = norm(clean(originalDestination));
+  // 괄호 안 쉼표는 건물명의 일부다. 주소 안 슬래시는 아래 끝 이름 보조 규칙도 확인한다.
+  let separator = -1, separatorDepth = 0, depth = 0;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (character === "(") depth++;
+    else if (character === ")") depth = Math.max(0, depth - 1);
+    else if ("_/".includes(character) || (depth === 0 && character === ",")) { separator = index; separatorDepth = depth; }
   }
-  const slash = text.lastIndexOf("/");
-  if (slash > 0) {
-    const address = text.slice(0, slash).trim(), candidate = text.slice(slash + 1).trim();
-    const name = recipient(candidate);
-    // 주소 안 동/호 표기는 보존하고 마지막 구분자 뒤의 한글 이름만 확정한다.
-    if (address && /^[가-힣]{2,5}$/.test(name)) return result(candidate, address);
-    // 이름처럼 적힌 불완전한 뒷부분을 끝 이름 규칙으로 다시 추측하지 않는다.
-    // 동/호 숫자·쉼표·닫는 괄호가 있으면 주소 일부일 수 있어 기존 보필 규칙으로 확인한다.
-    if (!/[\d,)]/.test(name)) return null;
-  }
-  if (vendor === "bofeel") {
-    // 건물명 괄호 안 쉼표는 주소의 일부다. 수취인 구분자로 쓰지 않는다.
-    let comma = -1, depth = 0;
-    for (let i = 0; i < text.length; i++) {
-      if (text[i] === "(") depth++;
-      else if (text[i] === ")") depth--;
-      else if (text[i] === "," && depth === 0) comma = i;
-      if (depth < 0) return null;
+  let address = separator >= 0 ? text.slice(0, separator).trim() : "";
+  let candidate = separator >= 0 ? clean(text.slice(separator + 1)) : "";
+  // 명시적 구분자가 없으면 기존 보필의 보수적인 끝 이름 분리만 사용한다.
+  const balanced = (part) => (part.match(/\(/g)?.length ?? 0) === (part.match(/\)/g)?.length ?? 0);
+  if (vendor === "bofeel" && balanced(text) && (separator < 0 ||
+      (text[separator] === "/" && (/^\d+(?:동|호|층|가)\s+/.test(candidate) || (separatorDepth > 0 && separator < text.lastIndexOf(")")))))) {
+    const match = /^(.*\S)\s+([가-힣*]{1,5}(?:님)?(?:\s*[DdHh])?(?:님)?)$/.exec(text);
+    if (match && /\d/.test(match[1]) && !/(?:호|동|층|가|로|길|건물|아파트|빌라|주택|센터|병원|상가)(?:님)?(?:\s*[DdHh])?$/.test(match[2])) {
+      address = match[1]; candidate = match[2];
     }
-    if (depth !== 0) return null;
-    const match = comma < 0 ? /^(.*\S)\s+([가-힣]{2,4}[Dd]?)$/.exec(text) : null;
-    const address = comma >= 0 ? text.slice(0, comma).trim() : match?.[1];
-    const candidate = comma >= 0 ? text.slice(comma + 1).trim() : match?.[2];
-    const name = recipient(candidate ?? "");
-    if (!address || !name || (comma < 0 ? !/^[가-힣]{2,4}$/.test(name) : name.length > 40 || /[_/,]/.test(name)) || /(?:호|동|층|가|로|길|건물|아파트|빌라|주택|센터|병원|상가)$/.test(name) ||
-        !/\d/.test(address) || (address.match(/\(/g)?.length ?? 0) !== (address.match(/\)/g)?.length ?? 0)) return null;
-    return result(candidate, address);
   }
-  return null;
+  let name = candidate;
+  // 한글 바로 뒤(공백 허용)의 내부 표기 한 글자만 제거한다. 영문 이름은 보존한다.
+  for (let pass = 0; pass < 2; pass++) {
+    const suffix = /[가-힣]\s*([DdHh])$/.exec(name);
+    if (suffix) {
+      name = name.slice(0, suffix.index + 1);
+      note(`수취인 끝 내부 표기 ${suffix[1].toUpperCase()} 제거`);
+    }
+    if (name.endsWith("님")) { name = name.slice(0, -1).trim(); note("수취인 끝 호칭 님 제거"); }
+  }
+  let reason = "";
+  if (!text || (separator >= 0 && !name)) reason = RECIPIENT_EMPTY_REASON;
+  else if (separator >= 0 && /^\(?\s*(?:지하\s*)?\d/.test(name)) reason = RECIPIENT_ADDRESS_REASON;
+  else if (!address || !name || !balanced(name)) reason = DESTINATION_HOLD_REASON;
+  else if (RECIPIENT_MAX_LENGTH[vendor] && name.length > RECIPIENT_MAX_LENGTH[vendor]) reason = `수취인 길이가 사이트 제한 ${RECIPIENT_MAX_LENGTH[vendor]}자를 초과함`;
+  return { status: reason ? "HOLD" : "READY", name, address, reason, originalDestination, normalizationNotes };
+}
+
+// 기존 호출부의 null 계약은 유지하고 상세 사유·원문은 analyzeDestination에서 제공한다.
+export function splitDestination(value, vendor = "eroum") {
+  const result = analyzeDestination(value, vendor);
+  if (result.status === "HOLD") return null;
+  return { name: result.name, address: result.address,
+    ...(result.normalizationNotes.length ? { normalizationNotes: result.normalizationNotes } : {}) };
 }
 

@@ -30,11 +30,12 @@ test("확인된 기본 상품만 정확히 연결한다", () => {
   assert.equal(mapProduct("eroum", row({ option: "회색" })).status, "HOLD");
 });
 
-test("마지막 밑줄 우선과 한글 이름 슬래시 규칙을 따른다", () => {
+test("마지막 구분자 뒤 수취인 규칙을 따른다", () => {
   assert.deepEqual(splitDestination("시험_주소_수취인"), { address: "시험_주소", name: "수취인" });
   assert.deepEqual(splitDestination("시험 / 주소 / 수취인"), { address: "시험 / 주소", name: "수취인" });
   assert.deepEqual(splitDestination("주소/이름"), { address: "주소", name: "이름" });
-  for (const text of ["주소만", "주소_", "_이름", "주소_이름/다른이름"]) assert.equal(splitDestination(text), null);
+  for (const text of ["주소만", "주소_", "_이름"]) assert.equal(splitDestination(text), null);
+  assert.deepEqual(splitDestination("주소_이름/다른이름"), { address: "주소_이름", name: "다른이름" });
 });
 
 test("원본 납품처 슬래시를 계획에 연결하고 미확정 수취인 사유를 유지한다", () => {
@@ -46,8 +47,25 @@ test("원본 납품처 슬래시를 계획에 연결하고 미확정 수취인 �
   assert.equal(valid.rows[0].recipient.address, '가상시 모의로 1 101동/102호');
   const invalid = planOrders(job([{ ...source, destination: '가상시 모의로 1 101동/102호' }]));
   assert.equal(invalid.rows[0].status, 'HOLD');
-  assert.equal(invalid.rows[0].reason, '납품처에서 수취인 이름을 확정할 수 없음');
+  assert.equal(invalid.rows[0].reason, '납품처 끝이 주소 조각이라 수취인을 확정할 수 없음');
   assert.equal(invalid.groups.length, 0);
+});
+
+test('확장 수취인과 원문·정규화 기록을 계획과 준비 결과에 보존하며 보류 사유를 전달한다', async () => {
+  const original = '\t"가상시 모의로 1/(주)가상센터 대표님 h"\t';
+  const source = row({ sourceSystem: '보필', productName: 'BFSH10', recipientName: '', address: '', destination: original, memo: '모의 비고' });
+  const plan = planOrders(job([source]));
+  assert.equal(plan.rows[0].status, 'READY');
+  assert.equal(plan.rows[0].recipient.name, '(주)가상센터 대표');
+  assert.equal(plan.rows[0].destination, original);
+  assert.equal(plan.rows[0].recipient.memo, '모의 비고');
+  const result = await prepareHttpJob(job([source]), { runVendor: async () => ({ details: [{ lineNo: 1, status: 'READY', reason: '' }] }) });
+  assert.deepEqual(result.details[0].normalizationNotes, plan.rows[0].normalizationNotes);
+  for (const [tail, reason] of [['', '수취인 없음'], ['302호', '납품처 끝이 주소 조각이라 수취인을 확정할 수 없음'], ['가'.repeat(21), '수취인 길이가 사이트 제한 20자를 초과함']]) {
+    const held = planOrders(job([{ ...source, destination: `가상시 모의로 1/${tail}` }]));
+    assert.equal(held.rows[0].reason, reason);
+    assert.equal(held.groups.length, 0);
+  }
 });
 
 test("같은 업체·수취인·연락처·주소인 행만 묶고 다른 배송지는 분리한다", () => {
@@ -94,13 +112,13 @@ test("원본 행 키는 큐 작업과 별칭이 바뀌어도 같다", () => {
   assert.throws(() => publicLedgerRowKey(first, "짧음"));
 });
 
-test("보필은 밑줄·괄호 밖 마지막 쉼표·보수적인 끝 이름을 해석하고 이로움은 기존 구분자를 유지한다", () => {
+test("두 업체의 명시적 구분자와 보필의 보수적인 끝 이름을 해석한다", () => {
   for (const text of ["모의로 1, 모의인", "모의로 1 (모의동, 모의건물) 101호 모의인", "모의로 1_모의인"]) {
     assert.equal(splitDestination(text, "bofeel")?.name, "모의인");
   }
   assert.deepEqual(splitDestination("모의로 1, 상세, 모의인", "bofeel"), { address: "모의로 1, 상세", name: "모의인" });
   for (const text of ["모의로 1 모의동", "모의로 1 모의건물", "모의로 1 abc", "모의로 1 101호", "모의로 1 (모의건물 모의인", "모의로 1,", "모의로 1"]) assert.equal(splitDestination(text, "bofeel"), null);
-  assert.equal(splitDestination("모의로 1, 모의인", "eroum"), null);
+  assert.deepEqual(splitDestination("모의로 1, 모의인", "eroum"), { address: "모의로 1", name: "모의인" });
 });
 
 test("보필의 확인한 색상 별칭·수량 구간은 연결하며 미확인 색상은 HOLD다", () => {

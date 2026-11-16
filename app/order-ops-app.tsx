@@ -1,7 +1,7 @@
 "use client";
 
 import { submissionContent } from "../worker/order-runner/order-approval.mjs";
-import { splitDestination, DESTINATION_HOLD_REASON } from "../worker/order-runner/b2b-destination.mjs";
+import { analyzeDestination } from "../worker/order-runner/b2b-destination.mjs";
 import { inspectWorkbook, selectWorksheet, worksheetMatrix, workbookProblem, duplicateOrderFiles, type SourceWorkbook } from "../worker/order-runner/workbook-policy.mjs";
 import type { Workbook } from "exceljs";
 import WorkbookSheetPicker from "./workbook-sheet-picker";
@@ -63,6 +63,8 @@ import { createOrderJob, getOrderJob, listOrderJobs, updateOrderJob } from "@/li
 import InventoryRegistrationPage from "./inventory-registration-page";
 
 type OrderRow = {
+  destination?: string;
+  normalizationNotes?: string[];
   postcodeSearchResponse?: unknown;
   sourceSheet: string;
   lineNo: number;
@@ -322,13 +324,14 @@ function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum") {
     if (!activeMapping) return;
     const value = (key: string) => workbookText(row[activeMapping?.[key] ?? -1]);
     const orderId = value("order_id");
-    const destination = value("destination");
+    const destination = String(row[activeMapping["destination"]] ?? "");
     const phone = value("recipient_phone");
     const product = value("product_name");
     const quantity = value("quantity");
     const memo = value("memo");
     if (![orderId, destination, phone, product, quantity].some(Boolean)) return;
-    const parsedDestination = splitDestination(destination, vendor);
+    const destinationAnalysis = analyzeDestination(destination, vendor);
+    const parsedDestination = destinationAnalysis.status === "READY" ? destinationAnalysis : null;
     const splitProduct = splitThkcProduct(product);
     parsed.push({
       __line_no: rowIndex + 1,
@@ -344,7 +347,9 @@ function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum") {
       recipient_phone: phone,
       zipcode: "",
       address: parsedDestination?.address ?? destination,
-      __destination_hold_reason: parsedDestination ? "" : DESTINATION_HOLD_REASON,
+      __destination_original: destination,
+      __destination_normalization_notes: destinationAnalysis.normalizationNotes,
+      __destination_hold_reason: destinationAnalysis.reason,
       address_detail: "",
       memo,
     });
@@ -420,6 +425,10 @@ function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
   }
 
   return {
+    ...(raw.__destination_original !== undefined ? {
+      destination: String(raw.__destination_original),
+      normalizationNotes: raw.__destination_normalization_notes as string[],
+    } : {}),
     sourceSheet: cell(raw, "source_sheet"),
     lineNo: Number(cell(raw, "__line_no")) || index + 2,
     sourceSystem: normalizeChannelName(cell(raw, "source_system") || cell(raw, "site") || cell(raw, "erp") || "미지정"),

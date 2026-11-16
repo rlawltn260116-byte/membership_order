@@ -16,7 +16,7 @@ import { PassThrough, Writable } from 'node:stream';
 import ExcelJS from 'exceljs';
 import * as policy from '../worker/order-runner/workbook-policy.mjs';
 import * as schedule from '../worker/order-runner/schedule.mjs';
-import { splitDestination, DESTINATION_HOLD_REASON } from '../worker/order-runner/b2b-destination.mjs';
+import { splitDestination, analyzeDestination, DESTINATION_HOLD_REASON } from '../worker/order-runner/b2b-destination.mjs';
 import { submissionContent } from '../worker/order-runner/order-approval.mjs';
 import { prepareHttpJob, runQueueVendor } from '../worker/order-runner/b2b-queue.mjs';
 import { workerHarness } from './helpers/order-worker-harness.mjs';
@@ -31,7 +31,7 @@ async function screen() {
     if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
     return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }];
   };
-  const context = { React, ExcelJS, console, window: { crypto: webcrypto }, TextEncoder, process: { env: {} }, ...policy, ...schedule, splitDestination, DESTINATION_HOLD_REASON, submissionContent,
+  const context = { React, ExcelJS, console, window: { crypto: webcrypto }, TextEncoder, process: { env: {} }, ...policy, ...schedule, splitDestination, analyzeDestination, DESTINATION_HOLD_REASON, submissionContent,
     useState: state, useRef: initial => state(() => ({ current: initial }))[0], useMemo: fn => fn(), useEffect: () => {},
     createOrderJob: async value => { const job = { ...value, id: 'saved' }; saved.push(job); return job; },
     listOrderJobs: async () => saved,
@@ -84,9 +84,13 @@ test('실제 엑셀 업로드는 공용 규칙으로 이름을 나누고 모호�
       '가상시 모의로 1 /모의인', '가상시 모의로 1/ 모의인', '가상시 모의로 1 / 모의인',
       '가상시 모의로 1, 모의인', '가상시 모의로 1 모의인',
       '가상시 모의로 1 101동/102호 /모의인', '가상시 모의로 1 101동/102호',
-      '가상시 모의로 1', '가상시 모의로 1 /수취인확인필요',
+      '가상시 모의로 1', '가상시 모의로 1 /가상재가복지센터',
       '가상시 모의로 1/모의인D', '가상시 모의로 1_모의인D',
-      '가상시 모의로 1, 모의인d', '가상시 모의로 1_MHD'];
+      '가상시 모의로 1, 모의인d', '가상시 모의로 1_MHD',
+      '\t"가상시 모의로 1/(주)가상센터 대표님 h"\t',
+      '가상시 모의로 1/모의인(가나림)', '가상시 모의로 1/MOCK PERSON',
+      '가상시 모의로 1/모의인ㆍ가나림', '가상시 모의로 1/가', '가상시 모의로 1/모*인',
+      '가상시 모의로 1/', '가상시 모의로 1/302호', `가상시 모의로 1/${'가'.repeat(21)}`];
     book.addWorksheet('발주').addRows([
       ['주문번호', '납품처', '납품처전화번호', '품명', '주문수량', '비고(내역)'],
       ...destinations.map((destination, i) => ['TEST-' + i, destination, '01000000000',
@@ -99,19 +103,26 @@ test('실제 엑셀 업로드는 공용 규칙으로 이름을 나누고 모호�
     const vendorId = vendor === '보필' ? 'bofeel' : 'eroum';
     saved.rows.forEach((row, i) => {
       const expected = splitDestination(destinations[i], vendorId);
+      const analysis = analyzeDestination(destinations[i], vendorId);
+      assert.equal(row.destination, destinations[i]);
+      assert.deepEqual(Array.from(row.normalizationNotes), analysis.normalizationNotes);
       assert.equal(row.recipientName, expected?.name ?? '', `${vendor} ${i}`);
       assert.equal(row.address, expected?.address ?? destinations[i]);
       assert.equal(row.status, expected ? 'READY' : 'HOLD');
-      assert.equal(row.reason, expected ? '' : DESTINATION_HOLD_REASON);
+      assert.equal(row.reason, analysis.reason);
       assert.equal(row.memo, '모의 비고');
     });
-    assert.equal(saved.holdRows, vendor === '보필' ? 3 : 6);
+    assert.equal(saved.holdRows, 5);
     assert.equal(saved.failedRows, 0);
     const html = renderToStaticMarkup(React.createElement(app.context.OrderTable, { rows: saved.rows }));
     assert.match(html, /납품처에서 수취인 이름을 확정할 수 없음/);
     const held = saved.rows.filter(row => row.status === 'HOLD');
     const result = await prepareHttpJob({ ...saved, rows: held }, { runVendor: () => assert.fail('사이트 접근 금지') });
-    for (const detail of result.details) assert.match(detail.reason, /납품처에서 수취인 이름을 확정할 수 없음/);
+    for (const detail of result.details) {
+      assert.ok(held.some(row => row.reason === detail.reason), detail.reason);
+      const source = held.find(row => row.lineNo === detail.lineNo);
+      assert.deepEqual(Array.from(detail.normalizationNotes), Array.from(source.normalizationNotes));
+    }
   }
 });
 
