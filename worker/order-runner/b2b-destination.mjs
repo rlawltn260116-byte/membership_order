@@ -12,7 +12,13 @@ export function centerOrderContext(context = {}) {
   const filename = String(context.sourceFile ?? context.filename ?? "").split(/[\\/]/).at(-1);
   if (/센터|지사/.test(filename)) evidence.push("파일명에 센터·지사 포함");
   if (/센터|지사/.test(String(context.memo ?? context["비고(내역)"] ?? ""))) evidence.push("비고(내역)에 센터·지사 포함");
-  return { centerOrder: evidence.length > 0, centerOrderEvidence: evidence };
+  const candidates = text => [...new Set([...String(text ?? "").normalize("NFC").matchAll(/[가-힣A-Za-z]+(?:센터|지사)/g)].map(match => match[0]))];
+  const memoNames = candidates(context.memo ?? context["비고(내역)"]);
+  const names = memoNames.length ? memoNames : candidates(filename);
+  return { centerOrder: evidence.length > 0, centerOrderEvidence: evidence,
+    centerName: names.length === 1 ? names[0] : "",
+    centerNameReason: names.length > 1 ? "센터명 후보가 2개 이상임" : "센터명을 확정할 수 없음",
+    recipientSource: names.length === 1 ? (memoNames.length ? "비고 센터명" : "파일명 센터명") : "" };
 }
 
 export function analyzeDestination(value, vendor = "eroum", context = {}) {
@@ -58,12 +64,33 @@ export function analyzeDestination(value, vendor = "eroum", context = {}) {
   }
   let reason = "";
   if (center.centerOrder && text && separator < 0 && !address) { address = text; name = ""; }
-  if (center.centerOrder && address && !name) { /* 센터 발주 수취인은 원본 공란 유지 */ }
+  let recipientSource = "납품처 수취인";
+  // 센터 꼬리에 섞인 층·호수는 주소에 보존하고 기관 이름만 분리한다.
+  if (center.centerOrder && separator >= 0 && /^\(?\s*(?:지하\s*)?\d/.test(name) && /센터|지사/.test(name)) {
+    const prefix = /^(?:(?:\(\s*)?(?:지하\s*)?\d+\s*(?:층|호)(?:\s*\))?\s*)+/.exec(name);
+    const remaining = prefix ? name.slice(prefix[0].length).trim() : "";
+    const centers = [...new Set(remaining.match(/[가-힣A-Za-z]+(?:센터|지사)/g) ?? [])];
+    if (remaining && centers.length === 1 && balanced(remaining) && !/^\d/.test(remaining) &&
+        !/[;,/]|(?:또는|혹은)/.test(remaining)) {
+      address = [address, prefix[0].trim()].filter(Boolean).join(" ");
+      name = remaining;
+      note("센터 수취인 앞 층·호수 표기를 주소로 분리");
+    } else {
+      address = [address, name].filter(Boolean).join(" ");
+      name = "";
+      note("센터 주소 조각 꼬리가 모호하여 비고·파일명 센터명으로 대체");
+    }
+  }
+  if (center.centerOrder && address && !name) {
+    name = center.centerName; recipientSource = center.recipientSource;
+    if (!name) reason = center.centerNameReason;
+  }
+  if (reason) {}
   else if (!text || (separator >= 0 && !name)) reason = RECIPIENT_EMPTY_REASON;
   else if (separator >= 0 && /^\(?\s*(?:지하\s*)?\d/.test(name)) reason = RECIPIENT_ADDRESS_REASON;
   else if (!address || !name || !balanced(name)) reason = DESTINATION_HOLD_REASON;
   else if (RECIPIENT_MAX_LENGTH[vendor] && name.length > RECIPIENT_MAX_LENGTH[vendor]) reason = `수취인 길이가 사이트 제한 ${RECIPIENT_MAX_LENGTH[vendor]}자를 초과함`;
-  return { status: reason ? "HOLD" : "READY", name, address, reason, originalDestination, normalizationNotes, ...center };
+  return { status: reason ? "HOLD" : "READY", name, address, reason, originalDestination, normalizationNotes, ...center, recipientSource };
 }
 
 // 기존 호출부의 null 계약은 유지하고 상세 사유·원문은 analyzeDestination에서 제공한다.

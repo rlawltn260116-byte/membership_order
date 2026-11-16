@@ -68,6 +68,7 @@ type OrderRow = {
   orderKind?: string;
   supplier?: string;
   supplierEvidence?: string;
+  recipientSource?: string;
   centerOrder?: boolean;
   centerOrderEvidence?: string[];
   destination?: string;
@@ -358,6 +359,7 @@ function parseThkcWorkbookRows(matrix: unknown[][], vendor = "eroum", filename =
       __destination_original: destination,
       __destination_normalization_notes: destinationAnalysis.normalizationNotes,
       __destination_hold_reason: destinationAnalysis.reason,
+      __recipient_source: destinationAnalysis.recipientSource,
       __center_order: destinationAnalysis.centerOrder,
       __center_order_evidence: destinationAnalysis.centerOrderEvidence,
       address_detail: "",
@@ -389,11 +391,15 @@ function parseXlsx(workbook: Workbook, filename: string, selectedSheet: string) 
     const analysis = row.__destination_original === undefined && row.destination !== undefined ?
       analyzeDestination(String(row.destination), /보필/.test(filename) ? "bofeel" : "eroum", { filename, memo: String(row.memo ?? "") }) : null;
     const center = centerOrderContext({ filename, memo: String(row.memo ?? "") });
+    if (!analysis && row.__destination_original === undefined && !String(row.recipient_name ?? "").trim() && center.centerOrder) {
+      row = { ...row, recipient_name: center.centerName, __recipient_source: center.recipientSource,
+        __destination_hold_reason: center.centerName ? "" : center.centerNameReason };
+    }
     return { ...row, __center_order: center.centerOrder, __center_order_evidence: center.centerOrderEvidence,
       ...(analysis ? { __destination_original: analysis.originalDestination,
       __destination_hold_reason: analysis.reason, __destination_normalization_notes: analysis.normalizationNotes,
       recipient_name: analysis.name, address: analysis.address, __center_order: analysis.centerOrder,
-      __center_order_evidence: analysis.centerOrderEvidence } : {}), source_sheet: sheet.name, source_file: filename };
+      __center_order_evidence: analysis.centerOrderEvidence, __recipient_source: analysis.recipientSource } : {}), source_sheet: sheet.name, source_file: filename };
   });
 }
 
@@ -449,6 +455,7 @@ function validateOrder(raw: Record<string, unknown>, index: number): OrderRow {
   return {
     ...classification,
     sourceFile: cell(raw, "source_file"),
+    recipientSource: String(raw.__recipient_source ?? ""),
     centerOrder,
     centerOrderEvidence: (raw.__center_order_evidence ?? []) as string[],
     ...(raw.__destination_original !== undefined ? {
@@ -1222,7 +1229,7 @@ export default function OrderOpsApp() {
                 <TabsTrigger value="audit">작업 로그</TabsTrigger>
               </TabsList>
               <TabsContent value="rows" className="mt-4">
-                {rows.length ? <div className="space-y-4">{rows.map((row, index) => <article key={`${row.lineNo}-${index}`} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs text-slate-400">{row.sourceSystem} · 원본 {row.lineNo}행</p><h3 className="mt-2 font-semibold">{row.productName}</h3>{row.option ? <p className="mt-1 text-sm text-slate-500">{row.option}</p> : null}</div><Badge className={statusClass(row.status)}>{statusLabel(row.status)}</Badge></div><dl className="mt-4 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-3 border-t border-slate-100 pt-4 text-sm"><dt className="text-slate-400">원주문번호</dt><dd className="break-all">{row.orderId || "-"}</dd><dt className="text-slate-400">수량</dt><dd>{row.quantity}개</dd><dt className="text-slate-400">수취인</dt><dd>{row.centerOrder ? "센터 발주(수취인 생략)" : row.recipientName || "-"}{row.centerOrder ? <span className="mt-1 block text-xs text-slate-500">{row.centerOrderEvidence?.join(" · ")}</span> : null}<span className="mt-1 block text-xs text-slate-500">{row.recipientPhone}</span></dd><dt className="text-slate-400">배송지</dt><dd className="break-words leading-6">{row.address} {row.addressDetail}</dd><dt className="text-slate-400">배송 메모</dt><dd className="break-words">{row.memo || "-"}</dd>{row.reason ? <><dt className="text-slate-400">검증 사유</dt><dd className="leading-6">{row.reason}</dd></> : null}</dl></article>)}</div> : <EmptyState />}
+                {rows.length ? <div className="space-y-4">{rows.map((row, index) => <article key={`${row.lineNo}-${index}`} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs text-slate-400">{row.sourceSystem} · 원본 {row.lineNo}행</p><h3 className="mt-2 font-semibold">{row.productName}</h3>{row.option ? <p className="mt-1 text-sm text-slate-500">{row.option}</p> : null}</div><Badge className={statusClass(row.status)}>{statusLabel(row.status)}</Badge></div><dl className="mt-4 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-3 border-t border-slate-100 pt-4 text-sm"><dt className="text-slate-400">원주문번호</dt><dd className="break-all">{row.orderId || "-"}</dd><dt className="text-slate-400">수량</dt><dd>{row.quantity}개</dd><dt className="text-slate-400">수취인</dt><dd>{row.centerOrder ? `센터 발주(수취인: ${row.recipientName || "미확정"})` : row.recipientName || "-"}{row.centerOrder ? <span className="mt-1 block text-xs text-slate-500">{row.centerOrderEvidence?.join(" · ")}</span> : null}<span className="mt-1 block text-xs text-slate-500">{row.recipientPhone}</span></dd><dt className="text-slate-400">배송지</dt><dd className="break-words leading-6">{row.address} {row.addressDetail}</dd><dt className="text-slate-400">배송 메모</dt><dd className="break-words">{row.memo || "-"}</dd>{row.reason ? <><dt className="text-slate-400">검증 사유</dt><dd className="leading-6">{row.reason}</dd></> : null}</dl></article>)}</div> : <EmptyState />}
               </TabsContent>
               <TabsContent value="review" className="mt-4">
                 <WorkerReviewPanel
@@ -2249,7 +2256,7 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
               </TableCell>
               <TableCell>{row.quantity || "-"}</TableCell>
               <TableCell>
-                {row.centerOrder ? "센터 발주(수취인 생략)" : row.recipientName || "-"}
+                {row.centerOrder ? `센터 발주(수취인: ${row.recipientName || "미확정"})` : row.recipientName || "-"}
                 {row.centerOrder ? <div className="text-xs text-slate-500">{row.centerOrderEvidence?.join(" · ")}</div> : null}
                 <div className="text-xs text-slate-500">{row.recipientPhone}</div>
               </TableCell>

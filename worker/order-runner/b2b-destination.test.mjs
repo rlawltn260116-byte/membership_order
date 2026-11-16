@@ -83,3 +83,45 @@ test('기존 보필 끝 이름과 주소 안 구분자를 유지하고 미확정
     assert.equal(splitDestination(text, 'bofeel'), null);
   }
 });
+
+test('센터명 우선순위와 혼합 비고·복수 후보·일반 빈칸·길이를 검증한다', () => {
+ for (const [context, name, source] of [
+ [{memo:'모의센터'},'모의센터','비고 센터명'],
+ [{memo:'모의지사/등, 방석 세트로 배송',filename:'다른센터.xlsx'},'모의지사','비고 센터명'],
+ [{filename:'20261113_가상센터_재고.xlsx'},'가상센터','파일명 센터명'],
+ [{filename:'제조사발주서(모의센터)11.16.xlsx'},'모의센터','파일명 센터명']]) {
+ const result=analyzeDestination(address+'/', 'bofeel', context);
+ assert.equal(result.status,'READY'); assert.equal(result.name,name); assert.equal(result.recipientSource,source);
+ assert.equal(analyzeDestination(address+'/기존기관','bofeel',context).name,'기존기관');
+ }
+ for (const context of [{memo:'가상센터 모의지사'}, {filename:'가상센터_모의지사.xlsx'}, {memo:'센터'}, {}])
+ assert.equal(analyzeDestination(address+'/', 'bofeel',context).status,'HOLD');
+ assert.equal(analyzeDestination(address+'/', 'bofeel',{memo:'가'.repeat(19)+'센터'}).status,'HOLD');
+});
+
+
+test('센터 꼬리의 층·호수는 주소에 보존하고 기관·지사 이름을 수취인으로 분리한다', () => {
+  for (const vendor of ['bofeel', 'eroum']) {
+    for (const prefix of ['1층', '302호', '1층 302호', '(302호)', '지하 1층']) {
+      const original = address + ', ' + prefix + ' 모의복지용구 가상지사';
+      const result = analyzeDestination(original, vendor, { filename: '가상센터.xlsx' });
+      assert.equal(result.status, 'READY');
+      assert.equal(result.name, '모의복지용구 가상지사');
+      assert.equal(result.recipientSource, '납품처 수취인');
+      assert.equal(result.address, address + ' ' + prefix);
+      assert.equal(result.originalDestination, original);
+      assert.ok(result.normalizationNotes.length);
+      assert.equal(analyzeDestination(original, vendor).reason, RECIPIENT_ADDRESS_REASON);
+    }
+    const fallback = analyzeDestination(address + ', 1층 가상센터 또는 모의지사', vendor,
+      { filename: '파일센터.xlsx', memo: '비고지사' });
+    assert.equal(fallback.status, 'READY');
+    assert.equal(fallback.name, '비고지사');
+    assert.equal(fallback.recipientSource, '비고 센터명');
+    assert.equal(analyzeDestination(address + ', 1층', vendor, { filename: '가상센터.xlsx' }).status, 'HOLD');
+    assert.equal(analyzeDestination(address + ', 1층 가상센터 또는 모의지사', vendor,
+      { filename: '센터.xlsx' }).status, 'HOLD');
+  }
+  assert.equal(analyzeDestination(address + ', 1층 ' + '가'.repeat(19) + '센터', 'bofeel',
+    { filename: '가상센터.xlsx' }).status, 'HOLD');
+});

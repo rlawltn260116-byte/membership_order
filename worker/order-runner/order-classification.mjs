@@ -1,3 +1,4 @@
+import { centerOrderContext } from './b2b-destination.mjs';
 import supplierData from './data/supplier-map.json' with { type: 'json' };
 import productData from './data/b2b-product-map.json' with { type: 'json' };
 import { lookupSupplier } from './supplier-lookup.mjs';
@@ -20,7 +21,7 @@ export function classifyOrderRow(row, suppliers = supplierData, products = produ
   const supplier = learned.status === 'matched' ? learned.supplier : learned.status === 'not_found' ? mappedSupplier : null;
   const conflict = supplier && mappedSupplier && supplier !== mappedSupplier;
   const partsOrder = !supplier || Boolean(conflict) || row.orderKind === PARTS_ORDER_KIND;
-  return { partsOrder, orderKind: partsOrder ? PARTS_ORDER_KIND : 'STANDARD',
+  return { ...centerOrderContext(row), partsOrder, orderKind: partsOrder ? PARTS_ORDER_KIND : 'STANDARD',
     supplier: partsOrder ? '' : supplier,
     supplierEvidence: partsOrder ? '상품 연결표·발주처 학습 자료에서 발주처 미확인 또는 모호함' :
       learned.status === 'matched' ? '발주처 학습 자료의 전체 모델명 일치' : '상품 연결표의 품명·모델 일치',

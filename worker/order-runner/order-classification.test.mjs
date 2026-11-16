@@ -16,7 +16,7 @@ test('센터·지사 판정은 파일명 또는 비고만 근거로 기록하고
     { filename: '가상센터_재고보유용.xlsx' }, { filename: '제조사지사.xlsx' }, { memo: '가상지사' }]) {
     const empty = analyzeDestination('가상시 모의로 1 /', 'bofeel', context);
     assert.equal(empty.status, 'READY');
-    assert.equal(empty.name, '');
+    assert.ok(empty.name);
     assert.equal(empty.address, '가상시 모의로 1');
     assert.equal(empty.centerOrderEvidence.length, 1);
     const named = analyzeDestination('가상시 모의로 1 / 가상센터', 'bofeel', context);
@@ -32,19 +32,11 @@ test('센터·지사 판정은 파일명 또는 비고만 근거로 기록하고
   assert.equal(analyzeDestination('가상시 모의로 1 모의인', 'bofeel', { filename }).name, '모의인');
 });
 
-test('센터 공란은 사이트 수취인 필수 제약을 별도로 보고하며 외부 준비·주소 조회를 하지 않는다', async () => {
-  const source = job([row({ destination: '가상시 모의로 1 /', zipcode: '' })]);
-  const plan = planOrders(source);
-  assert.equal(plan.rows[0].recipient.name, '');
-  assert.equal(plan.rows[0].centerOrder, true);
-  assert.ok(plan.rows[0].reason.includes(SITE_RECIPIENT_REQUIRED_REASON));
-  assert.ok(!plan.rows[0].reason.includes('수취인 없음'));
-  assert.equal(plan.groups.length, 0);
-  const result = await prepareHttpJob(source, { env: { ENABLE_B2B_HTTP_CART: 'true' },
-    lookupPostcodes: () => assert.fail('센터 공란 주소 조회 금지'), runVendor: () => assert.fail('센터 공란 사이트 요청 금지') });
-  assert.equal(result.canSubmit, false);
-  assert.equal(result.details[0].centerOrder, true);
-  assert.deepEqual(result.details[0].centerOrderEvidence, ['파일명에 센터·지사 포함']);
+test('센터명은 계획에 출처와 함께 보존된다', () => {
+ const plan = planOrders(job([row({ destination: '가상시 모의로 1 /' })]));
+ assert.equal(plan.rows[0].recipient.name, '가상센터');
+ assert.equal(plan.rows[0].recipientSource, '파일명 센터명');
+ assert.equal(plan.rows[0].status, 'READY');
 });
 
 test('미확인 부품·발주처는 분리하고 본체 모델·파일 업체로 발주처를 추측하지 않는다', () => {

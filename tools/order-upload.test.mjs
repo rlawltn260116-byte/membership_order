@@ -94,7 +94,7 @@ test('센터 업로드는 수취인 공란을 허용하고 미정 부품을 별�
   const parts = app.saved.find(value => value.orderKind === classification.PARTS_ORDER_KIND);
   assert.equal(normal.totalRows, 1);
   assert.equal(normal.rows[0].status, 'READY');
-  assert.equal(normal.rows[0].recipientName, '');
+  assert.equal(normal.rows[0].recipientName, '가상센터');
   assert.equal(normal.rows[0].centerOrder, true);
   assert.equal(parts.totalRows, 2);
   assert.equal(parts.status, 'HOLD');
@@ -112,7 +112,7 @@ test('센터 업로드는 수취인 공란을 허용하고 미정 부품을 별�
   assert.equal(app.button(tree, '서버 준비 요청').props.disabled, true);
   assert.ok(renderToStaticMarkup(tree).includes('aria-label="부품 주문(발주처 미정)"'));
   const markup = renderToStaticMarkup(React.createElement(app.context.OrderTable, { rows: parts.rows }));
-  assert.ok(markup.includes('센터 발주(수취인 생략)'));
+  assert.ok(markup.includes('센터 발주(수취인: 가상지사)'));
   assert.ok(markup.includes('파일명에 센터·지사 포함'));
 });
 

@@ -147,7 +147,7 @@ export async function prepareHttpJob(job, { env = process.env, runVendor = runQu
     const row = plan.rows.find(row => row.lineNo === detail.lineNo);
     if (row) Object.assign(detail, { productId: row.mapping.productId || "", optionName: row.mapping.optionName || (row.mapping.status === "READY" ? "기본 옵션" : "옵션 미확정"),
       quantity: row.quantity, postcodeDecision: row.postcodeDecision, normalizationNotes: row.normalizationNotes ?? [],
-      centerOrder: row.centerOrder, centerOrderEvidence: row.centerOrderEvidence, orderKind: row.orderKind,
+      recipientSource: row.recipientSource, centerOrder: row.centerOrder, centerOrderEvidence: row.centerOrderEvidence, orderKind: row.orderKind,
       supplier: row.supplier, supplierEvidence: row.supplierEvidence });
   }
   return { details: details.sort((a, b) => a.lineNo - b.lineNo), canSubmit, ...(preparedRows ? { preparedRows } : {}) };

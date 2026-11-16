@@ -1,4 +1,4 @@
-import { analyzeDestination, centerOrderContext, SITE_RECIPIENT_REQUIRED_REASON } from "./b2b-destination.mjs";
+import { analyzeDestination, centerOrderContext, RECIPIENT_MAX_LENGTH } from "./b2b-destination.mjs";
 import { classifyOrderRow, PARTS_ORDER_LABEL } from "./order-classification.mjs";
 export { splitDestination } from "./b2b-destination.mjs";
 // 상품 연결·배송지별 준비 계획. 외부 요청과 고객정보 저장을 하지 않는다.
@@ -76,7 +76,7 @@ export function normalizeRow(row, job, index) {
   const destination = row.destination ?? row["납품처"];
   const analysis = destination !== undefined ? analyzeDestination(destination, vendor, context) : null;
   const parsed = analysis?.status === "READY" ? analysis : null;
-  const name = norm(row.recipientName || parsed?.name);
+  const name = norm(row.recipientName || parsed?.name || (!destination && center.centerName));
   const originalAddress = norm(row.address || parsed?.address);
   let address = originalAddress;
   const phone = norm(row.recipientPhone ?? row["납품처전화번호"]).replace(/[\s-]/g, "");
@@ -108,8 +108,8 @@ export function normalizeRow(row, job, index) {
   const mapped = mapProduct(vendor, row);
   if (mapped.status === "HOLD") reason = [reason, mapped.reason].filter(Boolean).join("; ");
   if (postcodeReason) reason = [reason, postcodeReason].filter(Boolean).join("; ");
-  // 저장된 두 업체 주문서 모두 수취인이 필수다. 센터 공란을 이름으로 채우지 않는다.
-  if (center.centerOrder && !name && vendor) reason = [SITE_RECIPIENT_REQUIRED_REASON, reason].filter(Boolean).join("; ");
+  if (!name) reason = [center.centerOrder ? center.centerNameReason : "수취인 없음", reason].filter(Boolean).join("; ");
+  if (RECIPIENT_MAX_LENGTH[vendor] && name.length > RECIPIENT_MAX_LENGTH[vendor]) reason = `수취인 길이가 사이트 제한 ${RECIPIENT_MAX_LENGTH[vendor]}자를 초과함`;
   if (classification.partsOrder) reason = PARTS_ORDER_LABEL;
   const recipient = { name, address, detail, phone, postcode, memo: String(row.memo ?? row["비고(내역)"] ?? "") };
   const originalFile = norm(row.sourceFile ?? job.filename ?? job.sourceFile);
@@ -122,7 +122,7 @@ export function normalizeRow(row, job, index) {
     name, address, detail, phone, mapped.model ?? norm(row.productName ?? row["품명"]), mapped.optionId ?? norm(row.option), Number(quantity)])).digest("hex");
   const destinationSourceKey = createHash("sha256").update(JSON.stringify([vendor, name, originalAddress, norm(row.addressDetail), phone])).digest("hex");
   return { lineNo, sourceSheet: row.sourceSheet, vendor, orderId, quantity: Number(quantity), expectedPrice: row.expectedPrice ?? "", recipient, sourceKey, destinationSourceKey, mapping: mapped, postcodeDecision,
-    ...classification, ...center,
+    ...classification, ...center, recipientSource: row.recipientSource || analysis?.recipientSource || (row.recipientName ? "기존 수취인" : center.recipientSource),
     ...(analysis ? { destination: analysis.originalDestination, normalizationNotes: analysis.normalizationNotes } : {}),
     status: reason ? "HOLD" : "READY", reason, reviewNotes: [...(mapped.reviewNotes ?? []), ...(postcodeReason ? [postcodeReason] : [])] };
 }
