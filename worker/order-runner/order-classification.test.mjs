@@ -112,3 +112,14 @@ test('같은 상품명의 옵션 발주처가 갈리면 옵션 없는 행도 모
   const sameSupplier = { records: suppliers.records.map(row => ({ ...row, supplier: '모의A' })) };
   assert.equal(classifyOrderRow({ productName: '모의 상품' }, sameSupplier, {}).supplier, '모의A');
 });
+
+test('공백 없는 슬래시도 상품명과 옵션을 나누고 괄호 안 슬래시는 모델명으로 본다', async () => {
+  const { splitProductModel } = await import('./supplier-lookup.mjs');
+  assert.deepEqual(splitProductModel('성인용보행기 실버카단비/버건디'), { product: '성인용보행기 실버카단비', option: '버건디' });
+  assert.deepEqual(splitProductModel('지팡이 Chunji /블랙'), { product: '지팡이 Chunji', option: '블랙' });
+  assert.deepEqual(splitProductModel('이동변기 BFMB4 / 와인'), { product: '이동변기 BFMB4', option: '와인' });
+  assert.deepEqual(splitProductModel('미끄럼방지양말 YH-201(남성/겨울용)'), { product: '미끄럼방지양말 YH-201(남성/겨울용)', option: '' });
+  assert.equal(classifyOrderRow({ productName: '성인용보행기 실버카단비', option: '버건디' }).supplier, '삼주유니콘');
+  assert.equal(classifyOrderRow({ productName: "성인용보행기 Let's Fly", option: '레드' }).supplier, '티에이치케이컴퍼니');
+  assert.equal(classifyOrderRow({ productName: '미끄럼방지양말 YH-201(남성/겨울용)' }).supplier, '티에이치케이컴퍼니');
+});

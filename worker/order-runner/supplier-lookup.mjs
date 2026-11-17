@@ -9,14 +9,21 @@ export function lookupSupplier(model, data) {
   return summarize(modelKey, matches);
 }
 
-const OPTION_SEPARATOR = ' / ';
-
-/** 상품마스터 모델명은 " / " 앞이 상품명, 뒤가 옵션이다. 구분자가 없으면 전체가 상품명이다. */
+/**
+ * 상품마스터 모델명은 "/" 앞이 상품명, 뒤가 옵션이다(사용자 확정). 슬래시 앞뒤 공백은 있어도 없어도 된다.
+ * 괄호 안의 슬래시(예: "YH-201(남성/겨울용)")는 모델명의 일부라 구분자로 보지 않는다.
+ * 구분자가 없으면 전체가 상품명이다.
+ */
 export function splitProductModel(model) {
   const text = String(model ?? '');
-  const at = text.indexOf(OPTION_SEPARATOR);
-  return at < 0 ? { product: text, option: '' }
-    : { product: text.slice(0, at), option: text.slice(at + OPTION_SEPARATOR.length) };
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if ('([{'.includes(ch)) depth += 1;
+    else if (')]}'.includes(ch)) depth = Math.max(0, depth - 1);
+    else if (ch === '/' && depth === 0) return { product: text.slice(0, i).trim(), option: text.slice(i + 1).trim() };
+  }
+  return { product: text, option: '' };
 }
 
 /**
