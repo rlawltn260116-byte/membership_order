@@ -52,7 +52,7 @@ async function file(filename, sheets = ['발주'], phone = '01000000000', produc
 
 test('실제 화면은 같은 업체를 회차별로 표시하고 선택한 묶음의 단독 작업만 만든다', async () => {
   const app = await screen(); app.render();
-  await app.context.actions.loadFiles([await file('20261116_가상센터.xlsx', ['발주'], '01000000000', ['SPORTY', 'DYJ-03', '욕창예방방석 CD-07'])]);
+  await app.context.actions.loadFiles([await file('20261116_가상센터.xlsx', ['발주'], '01000000000', ['SPORTY', 'DYJ-03', '지팡이 ISA / 와인'])]);
   app.render(); await app.context.actions.save(); const tree = app.render();
   const html = renderToStaticMarkup(tree);
   assert.match(html, /10:30 접수마감/); assert.match(html, /14:30 접수마감/); assert.match(html, /회차 확인 필요\(표에 없음\)/);

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "rulesConfirmedAt": "2026-11-16",
+  "rulesConfirmedAt": "2026-11-17",
   "source": "2026년 11월 상품 공급가격표의 지정된 보이는 시트 3개",
   "sheets": [
     "급여 상품 공급 가격표",
@@ -1949,13 +1949,14 @@
       "modelKey": "성인용보행기activefreeop5",
       "category": "급여",
       "productName": "성인용보행기(2개/5년)",
-      "supplier": "사과나무코퍼레이션",
+      "supplier": "안앤락",
       "manufacturer": "SDF INTERNATIONAL CO.,LTD",
-      "scheduleVendor": "미정",
-      "scheduleStatus": "발주 시각·방식 미정",
+      "scheduleVendor": "안앤락",
+      "scheduleStatus": "시간표 연결",
       "rawSupplier": "사과나무COP(SDF INTERNATIONAL CO.,LTD)",
       "appliedRules": [
-        "업체명 별칭 통합"
+        "업체명 별칭 통합",
+        "사용자 확정 발주처 보정(2026-11-17)"
       ]
     },
     {
@@ -6215,6 +6216,7 @@
       "발주처·제조처 역전 보정": 5,
       "시간표 THK 연결": 64,
       "업체명 별칭 통합": 15,
+      "사용자 확정 발주처 보정(2026-11-17)": 1,
       "끝 직배 표기 제거": 6
     },
     "ambiguousModels": []

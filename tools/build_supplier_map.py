@@ -19,6 +19,7 @@ SHEETS = {
     "중고 상품 공급 가격표": ("중고", "매입처(공급처)"),
 }
 ALIASES = {"티에치케이컴퍼니": "티에이치케이컴퍼니", "사과나무COP": "사과나무코퍼레이션"}
+CONFIRMED_SUPPLIER_OVERRIDES = {"성인용보행기activefreeop5": "안앤락"}
 REVERSED_PAIRS = {
     ("닛신", "티에이치케이컴퍼니"),
     ("미라클메디", "티에이치케이컴퍼니"),
@@ -122,6 +123,11 @@ def build_supplier_map(source, schedule_path=DEFAULT_SCHEDULE):
                     ignored_rows += 1
                     continue
                 supplier, manufacturer, rules = parsed
+                model = model.strip()
+                confirmed_supplier = CONFIRMED_SUPPLIER_OVERRIDES.get(normalize_model(model))
+                if confirmed_supplier and confirmed_supplier != supplier:
+                    supplier = confirmed_supplier
+                    rules.append("사용자 확정 발주처 보정(2026-11-17)")
                 schedule_vendor = "THK" if supplier == "티에이치케이컴퍼니" else supplier
                 if schedule_vendor == "THK":
                     rules.append("시간표 THK 연결")
@@ -148,7 +154,7 @@ def build_supplier_map(source, schedule_path=DEFAULT_SCHEDULE):
         book.close()
     return {
         "schemaVersion": 1,
-        "rulesConfirmedAt": "2026-11-16",
+        "rulesConfirmedAt": "2026-11-17",
         "source": "2026년 11월 상품 공급가격표의 지정된 보이는 시트 3개",
         "sheets": list(SHEETS),
         "records": records,

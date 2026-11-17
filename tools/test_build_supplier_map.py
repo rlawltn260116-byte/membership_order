@@ -12,6 +12,23 @@ from build_supplier_map import SHEETS, build_supplier_map, normalize_model, pars
 
 
 class SupplierMapTests(unittest.TestCase):
+    def test_confirmed_op5_supplier_survives_regeneration(self):
+        from openpyxl import load_workbook
+        with tempfile.TemporaryDirectory() as temporary:
+            source, schedule = self.fixture(Path(temporary))
+            book = load_workbook(source)
+            book['급여 상품 공급 가격표'].append([None, '성인용보행기', '성인용보행기 ActiveFree OP5', '사과나무COP(SDF INTERNATIONAL CO.,LTD)'])
+            book.save(source)
+            book.close()
+            schedule.write_text(json.dumps({'schedule': [{'vendor': 'THK'}, {'vendor': '안앤락'}]}), encoding='utf-8')
+            data = build_supplier_map(source, schedule)
+        record = next(row for row in data['records'] if row['model'] == '성인용보행기 ActiveFree OP5')
+        self.assertEqual(record['supplier'], '안앤락')
+        self.assertEqual(record['scheduleVendor'], '안앤락')
+        self.assertEqual(record['scheduleStatus'], '시간표 연결')
+        self.assertIn('사과나무COP', record['rawSupplier'])
+        self.assertIn('사용자 확정 발주처 보정(2026-11-17)', record['appliedRules'])
+
     def test_reversed_pairs_and_ordinary_manufacturer(self):
         for raw, expected in (
             ("닛신(티에이치케이컴퍼니)", ("티에이치케이컴퍼니", "닛신")),

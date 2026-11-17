@@ -5,6 +5,15 @@ import { loadSupplierMap, lookupSupplier, normalizeModel } from './supplier-map.
 
 const data = loadSupplierMap();
 
+test('ActiveFree OP5 발주처·시간표는 사용자 확정 안앤락으로 보정하고 원본 출처를 보존한다', () => {
+  const result = lookupSupplier('성인용보행기 ActiveFree OP5', data);
+  assert.equal(result.supplier, '안앤락');
+  assert.equal(result.matches[0].scheduleVendor, '안앤락');
+  assert.equal(result.matches[0].scheduleStatus, '시간표 연결');
+  assert.match(result.matches[0].rawSupplier, /사과나무/);
+  assert.ok(result.matches[0].appliedRules.includes('사용자 확정 발주처 보정(2026-11-17)'));
+});
+
 test('학습한 모든 모델의 키와 정확 조회가 일치한다', () => {
   for (const row of data.records) {
     assert.equal(normalizeModel(row.model), row.modelKey);

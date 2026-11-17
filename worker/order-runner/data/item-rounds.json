@@ -1,5 +1,5 @@
 {
-  "source": "사용자 제공 아마란스 소분류별 품목·마감 표 (2026-11-17)",
+  "source": "사용자 제공 아마란스 소분류별 품목·마감 표 (2026-11-17) 및 사용자 추가 확정(2026-11-17)",
   "deadlineMeaning": {
     "orderDeadline": "사내 주문 마감",
     "receiptDeadline": "업체 발주 마감"
@@ -116,6 +116,28 @@
         {
           "model": "더안 탄소 레자 전기장판",
           "name": "온열매트 더안 탄소 레자 전기장판"
+        },
+        {
+          "model": "CD-07",
+          "name": "욕창예방방석 CD-07"
+        },
+        {
+          "model": "SS",
+          "name": "지팡이 SS",
+          "options": [
+            "와인",
+            "회색"
+          ],
+          "allowUnspecifiedOption": true
+        },
+        {
+          "model": "BS",
+          "name": "지팡이 BS",
+          "options": [
+            "브라운",
+            "와인"
+          ],
+          "allowUnspecifiedOption": true
         }
       ]
     },
@@ -199,6 +221,10 @@
             "블랙",
             "와인"
           ]
+        },
+        {
+          "model": "바이오스타 논슬립매트 3",
+          "name": "미끄럼방지매트 바이오스타 논슬립매트 3"
         }
       ]
     }

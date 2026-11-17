@@ -11,6 +11,7 @@ export function itemRound(channel, productName, option = '') {
   const name = norm(productName), selected = norm(option);
   const matches = itemRounds.filter(round => round.channel === channel && round.items.some(item => {
     const bases = [item.model, item.name, ...(item.aliases || [])].map(norm);
+    if (item.allowUnspecifiedOption && !selected && bases.includes(name)) return true;
     if (item.options) return item.options.some(value => bases.some(base =>
       (name === base && selected === norm(value)) || (!selected && (name === `${base}/${norm(value)}` || (value.startsWith('(') && name === `${base}${norm(value)}`)))));
     return !selected && bases.includes(name);

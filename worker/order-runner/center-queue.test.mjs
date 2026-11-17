@@ -40,7 +40,7 @@ async function fixture(products) {
 }
 
 test('이로움과 안앤락은 품목 회차별 첫 작업에만 합치고 표 밖 상품은 대기한다', async () => {
-  const { root, prepared } = await fixture(['SPORTY', 'DYJ-03', 'DBW6', 'SM-DUB-002', 'GC-R10', '지팡이 나래-4000 / 와인', '욕창예방방석 CD-07']);
+  const { root, prepared } = await fixture(['SPORTY', 'DYJ-03', 'DBW6', 'SM-DUB-002', 'GC-R10', '지팡이 나래-4000 / 와인', '지팡이 ISA / 와인']);
   for (const [id, channel, key, count] of [
     ['morning', '이로움', '이로움|10:00', 1], ['afternoon', 'THK', '이로움|14:00', 1],
     ['a', '안앤락', '안앤락|11:30', 1], ['b', '안앤락', '안앤락|13:00', 2], ['c', '안앤락', '안앤락|13:30', 1],
@@ -73,8 +73,24 @@ test('회차별 마감 30분 전 경계·첫 작업·주말과 단독 작업의 
   assert.equal(both.jobs.only.rows.length, 1);
 });
 
+test('추가 확정 네 품목은 오전에 붙지 않고 이로움 오후·안앤락 13:30 첫 작업에만 붙는다', async () => {
+  const products = ['욕창예방방석 CD-07', '지팡이 SS / 와인', '지팡이 BS / 브라운', '미끄럼방지매트 바이오스타 논슬립매트 3'];
+  const { root } = await fixture(products);
+  core.createJobWithCenters(root, 'morning', { ...manufacturer('이로움'), scheduleKey: '이로움|10:00' }, morning);
+  assert.equal(root.jobs.morning.rows.length, 1);
+  const groups = core.centerQueueGroups(root, new Date('2026-11-17T04:30:00Z'));
+  assert.equal(groups.find(g => g.scheduleKey === '이로움|14:00').entries.length, 3);
+  assert.equal(groups.find(g => g.scheduleKey === '이로움|14:00').alert, false);
+  assert.equal(groups.find(g => g.scheduleKey === '안앤락|13:30').alert, true);
+  core.createJobWithCenters(root, 'afternoon', { ...manufacturer('이로움'), scheduleKey: '이로움|14:00' }, morning);
+  assert.deepEqual(root.jobs.afternoon.rows.filter(row => row.centerQueueId).map(row => row.productName), products.slice(0, 3));
+  core.createJobWithCenters(root, 'cane', { ...manufacturer('안앤락'), scheduleKey: '안앤락|13:30' }, morning);
+  assert.equal(root.jobs.cane.rows[1].productName, products[3]);
+  assert.ok(Object.values(root['center-queue'].entries).every(entry => entry.state === 'RESERVED'));
+});
+
 test('ActiveFree OP5는 승인된 안앤락 11:30 작업에 합치고 표 밖 READY 상품도 사람이 제외할 수 있다', async () => {
-  const { root, prepared } = await fixture(['성인용보행기 ActiveFree OP5', '욕창예방방석 CD-07']);
+  const { root, prepared } = await fixture(['성인용보행기 ActiveFree OP5', '지팡이 ISA / 와인']);
   assert.equal(prepared[0].supplier, '안앤락');
   assert.equal(prepared[1].row.status, 'READY');
   core.createJobWithCenters(root, 'op5', { ...manufacturer('안앤락'), scheduleKey: '안앤락|11:30' }, morning);
