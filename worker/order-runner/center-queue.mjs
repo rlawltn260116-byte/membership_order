@@ -4,6 +4,7 @@ import { deliverySchedule, normalizeChannelName } from './schedule.mjs';
 import { classifyOrderRow, PARTS_ORDER_KIND, PARTS_ORDER_LABEL } from './order-classification.mjs';
 import { analyzeDestination, centerOrderContext } from './b2b-destination.mjs';
 import { workbookProblem, worksheetMatrix } from './workbook-policy.mjs';
+import { entryForJob, manualDonePatch, manualDoneUndoPatch, vendorAction } from './vendor-board.mjs';
 
 const norm = value => String(value ?? '').normalize('NFC').replace(/\s+/g, ' ').trim();
 export const koreaDay = (now = new Date()) => new Date(new Date(now).getTime() + 9 * 3600000).toISOString().slice(0, 10);
@@ -185,7 +186,7 @@ function release(root, job, ids) {
   job.rows = job.rows.filter(row => !ids.includes(row.centerQueueId));
   summarize(job);
 }
-export function centerReservationProblem(root, job) {
+export function centerReservationProblem(root, job, expectedState = 'RESERVED') {
   const seen = new Set();
   const sourceSignature = source => JSON.stringify([source?.filename, (source?.sheets || []).map(sheet => [sheet?.name, sheet?.state])]);
   for (const row of job.rows || []) {
@@ -193,14 +194,14 @@ export function centerReservationProblem(root, job) {
     if (seen.has(row.centerQueueId)) return '같은 센터 상품이 작업에 중복되어 있습니다.';
     seen.add(row.centerQueueId);
     const entry = entries(root)[row.centerQueueId];
-    if (!entry || entry.state !== 'RESERVED' || entry.jobId !== job.id || entry.channel !== channelFor(job.sourceSystem)) return '센터 상품 예약이 현재 작업과 일치하지 않습니다.';
+    if (!entry || entry.state !== expectedState || entry.jobId !== job.id || entry.channel !== channelFor(job.sourceSystem)) return '센터 상품 예약이 현재 작업과 일치하지 않습니다.';
     // 준비 중 우편번호 보완 이외에 센터 원본을 바꾸어 실행하지 않는다.
     for (const key of ['sourceFile', 'sourceDate', 'sourceSheet', 'sourceLineNo', 'selectedSheet', 'productName', 'option', 'quantity', 'destination', 'recipientName', 'recipientPhone', 'address', 'addressDetail', 'zipcode', 'memo']) {
       if (String(row[key] ?? '') !== String(entry.row[key] ?? '')) return '센터 예약 원본과 작업 행이 다릅니다.';
     }
     if (sourceSignature(row.sourceWorkbook) !== sourceSignature(entry.row.sourceWorkbook)) return '센터 예약의 시트 목록이 다릅니다.';
   }
-  if (Object.values(entries(root)).some(entry => entry.state === 'RESERVED' && entry.jobId === job.id && !job.rows?.some(row => row.centerQueueId === entry.id))) return '예약된 센터 상품이 작업에서 누락되었습니다.';
+  if (Object.values(entries(root)).some(entry => entry.state === expectedState && entry.jobId === job.id && !job.rows?.some(row => row.centerQueueId === entry.id))) return '예약된 센터 상품이 작업에서 누락되었습니다.';
   return null;
 }
 export function updateJobWithCenters(root, id, patch, now, worker = false) {
@@ -214,13 +215,43 @@ export function updateJobWithCenters(root, id, patch, now, worker = false) {
     target[keys.at(-1)] = value;
   }
   const ids = (current.rows || []).filter(row => row.centerQueueId).map(row => row.centerQueueId);
-  const reservationProblem = centerReservationProblem(root, job);
+  const manualDone = ids.length && job.status === 'COMPLETED' && !current.vendorOrderDone?.doneAt && patch.vendorOrderDone?.doneAt;
+  const manualUndo = ids.length && current.status === 'COMPLETED' && current.vendorOrderDone?.doneAt && patch.vendorOrderDone === null;
+  if (manualDone || manualUndo) {
+    const entry = entryForJob(current);
+    if (worker || !vendorAction(entry)?.manualDone || channelFor(current.sourceSystem) !== entry?.channel || uncertain(current) || uncertain(job))
+      throw new Error('이 작업은 수동 완료 표시로 센터 상태를 바꿀 수 없습니다.');
+    // 완료 표시와 취소는 주문 내용을 함께 변경하는 통로가 아니다.
+    const sourceFields = ['filename', 'sourceSystem', 'scheduleKey', 'selectedSheet', 'sourceDate'];
+    if (sourceFields.some(key => String(current[key] ?? '') !== String(job[key] ?? '')) ||
+        JSON.stringify(current.rows) !== JSON.stringify(job.rows) || JSON.stringify(current.sourceWorkbook) !== JSON.stringify(job.sourceWorkbook))
+      throw new Error('수동 완료 표시·취소와 주문 내용 변경은 함께 할 수 없습니다.');
+    if (manualDone) {
+      const at = new Date(job.vendorOrderDone.doneAt);
+      if (!Number.isFinite(at.getTime()) || !norm(job.vendorOrderDone.doneByName)) throw new Error('수동 발주 완료 시각·담당자 정보가 없습니다.');
+      const expected = manualDonePatch(current, at, job.vendorOrderDone.doneByName).vendorOrderDone;
+      if (['doneAt', 'doneByName', 'method', 'scheduleKey', 'previousStatus'].some(key => expected[key] !== job.vendorOrderDone[key]))
+        throw new Error('수동 발주 완료 정보가 업체·회차·이전 상태와 다릅니다.');
+    } else {
+      const expected = manualDoneUndoPatch(current, new Date(now));
+      if (job.status !== expected.status || ids.some(id => entries(root)[id]?.completedVia !== 'MANUAL'))
+        throw new Error('사람이 완료 표시한 센터 작업만 이전 상태로 되돌릴 수 있습니다.');
+    }
+  }
+  const reservationProblem = centerReservationProblem(root, job, manualUndo ? 'COMPLETED' : 'RESERVED');
   if (reservationProblem) throw new Error(reservationProblem);
-  if (ids.length && job.status === 'COMPLETED') {
+  if (manualUndo) {
+    for (const key of ids) {
+      const entry = entries(root)[key]; entry.state = 'RESERVED';
+      delete entry.completedAt; delete entry.completedVia;
+    }
+  } else if (manualDone) {
+    for (const key of ids) { entries(root)[key].state = 'COMPLETED'; entries(root)[key].completedAt = job.vendorOrderDone.doneAt; entries(root)[key].completedVia = 'MANUAL'; }
+  } else if (ids.length && job.status === 'COMPLETED') {
     if (job.executionMode !== 'SUBMIT' || job.report?.submittedRows !== job.rows.length ||
         job.report?.details?.length !== job.rows.length || new Set(job.report.details.map(row => row.lineNo)).size !== job.rows.length ||
         job.report.details.some(row => !job.rows.some(source => source.lineNo === row.lineNo) || row.status !== 'READY' || !row.orderNumber || !Number.isFinite(Date.parse(row.submittedAt)))) throw new Error('센터 발주 완료의 실제 제출 결과가 없습니다.');
-    for (const key of ids) { entries(root)[key].state = 'COMPLETED'; entries(root)[key].completedAt = now; }
+    for (const key of ids) { entries(root)[key].state = 'COMPLETED'; entries(root)[key].completedAt = now; entries(root)[key].completedVia = 'SUBMIT'; }
   } else if (ids.length && ['HOLD', 'FAILED'].includes(job.status) && !uncertain(job)) {
     release(root, job, ids);
     // 보류·실패의 이력은 보존하되 이전 보고와 승인을 재사용하지 않는다.

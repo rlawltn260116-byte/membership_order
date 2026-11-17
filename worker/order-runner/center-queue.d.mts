@@ -10,7 +10,7 @@ export function prepareCenterEntries(rows: CenterRow[], now?: Date): Promise<Cen
 export function uploadCenterEntries(root: CenterRoot, prepared: CenterEntry[], partsJobId: string, now: string): CenterRoot;
 export function createJobWithCenters(root: CenterRoot, id: string, input: Record<string, unknown>, now: string): CenterRoot;
 export function createCenterOnlyJob(root: CenterRoot, id: string, supplier: string, now: string): CenterRoot;
-export function centerReservationProblem(root: CenterRoot, job: unknown): string | null;
+export function centerReservationProblem(root: CenterRoot, job: unknown, expectedState?: 'RESERVED' | 'COMPLETED'): string | null;
 export function updateJobWithCenters(root: CenterRoot, id: string, patch: Record<string, unknown>, now: string, worker?: boolean): CenterRoot;
 export function removeCenterRow(root: CenterRoot, id: string, centerId: string, now: string): CenterRoot;
 export function excludeHeldCenterEntry(root: CenterRoot, id: string, now: string): CenterRoot;

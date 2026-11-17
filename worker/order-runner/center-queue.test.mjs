@@ -13,6 +13,7 @@ import { submissionContent } from './order-approval.mjs';
 import { workerHarness } from '../../tools/helpers/order-worker-harness.mjs';
 import { prepareHttpJob } from './b2b-queue.mjs';
 import supplierData from './data/supplier-map.json' with { type: 'json' };
+import { manualDonePatch, manualDoneUndoPatch, vendorBoard } from './vendor-board.mjs';
 
 const morning = '2026-11-17T00:00:00.000Z';
 function source(filename, sheet = '발주') { return { filename, sheets: [{ name: sheet, state: 'visible', rowCount: 2, headers: [] }] }; }
@@ -337,6 +338,55 @@ test('센터 단독 작업은 채널이 같아도 선택한 발주처의 검증 
   core.createCenterOnlyJob(root, 'only', '보필', morning);
   assert.equal(root.jobs.only.rows.length, 1);
   assert.equal(other.state, 'WAITING');
+});
+
+test('메일·팩스·카톡·ERP·직접 B2B의 수동 완료와 취소는 센터도 같은 트랜잭션에서 완료·예약으로 바꾼다', async () => {
+  for (const channel of ['안앤락', '유광정밀', '현대메딕스', '세비앙', '나눔에이치앤씨']) {
+    const record = supplierData.records.find(row => core.supplierChannel(row.supplier) === channel);
+    assert.ok(record, channel);
+    const { root, prepared } = await fixture([record.model]);
+    const input = manufacturer(channel); input.rows[0].productName = record.model;
+    core.createJobWithCenters(root, 'manual', input, morning);
+    const db = await firebase(root);
+    await db.context.updateOrderJob('manual', manualDonePatch(db.root.jobs.manual, new Date(morning)));
+    const completed = db.root['center-queue'].entries[prepared[0].id];
+    assert.equal(db.root.jobs.manual.status, 'COMPLETED', channel);
+    assert.equal(completed.state, 'COMPLETED'); assert.equal(completed.completedVia, 'MANUAL');
+    assert.equal(completed.jobId, 'manual');
+    assert.equal(vendorBoard(Object.values(db.root.jobs), new Date(morning)).find(item => item.jobs.some(job => job.id === 'manual')).status, 'DONE');
+    await assert.rejects(db.context.makeCenterOnlyJob(record.supplier), /검증 완료된 대기/);
+    await db.context.updateOrderJob('manual', manualDoneUndoPatch(db.root.jobs.manual, new Date(morning)));
+    const reserved = db.root['center-queue'].entries[prepared[0].id];
+    assert.equal(db.root.jobs.manual.status, 'READY'); assert.equal(db.root.jobs.manual.vendorOrderDone, null);
+    assert.equal(reserved.state, 'RESERVED'); assert.equal(reserved.jobId, 'manual');
+    assert.equal(reserved.completedAt, undefined); assert.equal(reserved.completedVia, undefined);
+    assert.equal(vendorBoard(Object.values(db.root.jobs), new Date(morning)).find(item => item.jobs.some(job => job.id === 'manual')).status, 'IN_PROGRESS');
+    await assert.rejects(db.context.makeCenterOnlyJob(record.supplier), /검증 완료된 대기/);
+  }
+});
+
+test('수동 완료 접점은 자동 B2B 승인·제출 우회와 업체·회차 변조 및 내용 동시 변경을 막는다', async () => {
+  const automated = await fixture();
+  core.createJobWithCenters(automated.root, 'auto', manufacturer(), morning);
+  const autoDb = await firebase(automated.root);
+  await assert.rejects(autoDb.context.updateOrderJob('auto', { status: 'COMPLETED', vendorOrderDone: {
+    doneAt: morning, doneByName: '모의 담당자', method: 'B2B몰', scheduleKey: '보필|09:00', previousStatus: 'READY',
+  } }), /수동 완료 표시/);
+  assert.equal(autoDb.root['center-queue'].entries[automated.prepared[0].id].state, 'RESERVED');
+  const record = supplierData.records.find(row => row.supplier === '안앤락');
+  const { root, prepared } = await fixture([record.model]);
+  core.createJobWithCenters(root, 'manual', manufacturer('안앤락'), morning);
+  const db = await firebase(root);
+  const patch = manualDonePatch(db.root.jobs.manual, new Date(morning));
+  for (const change of [{ method: '팩스' }, { scheduleKey: '세비앙|09:30' }, { previousStatus: 'RUNNING' }])
+    await assert.rejects(db.context.updateOrderJob('manual', { ...patch, vendorOrderDone: { ...patch.vendorOrderDone, ...change } }), /완료 정보/);
+  await assert.rejects(db.context.updateOrderJob('manual', { ...patch, rows: db.root.jobs.manual.rows.map(row => ({ ...row, quantity: '99' })) }), /내용 변경/);
+  assert.equal(db.root.jobs.manual.status, 'READY');
+  await db.context.updateOrderJob('manual', patch);
+  // 제출 경로로 완료된 센터를 수동 취소로 되돌리지 않는다.
+  db.root['center-queue'].entries[prepared[0].id].completedVia = 'SUBMIT';
+  await assert.rejects(db.context.updateOrderJob('manual', manualDoneUndoPatch(db.root.jobs.manual, new Date(morning))), /사람이 완료 표시/);
+  assert.equal(db.root['center-queue'].entries[prepared[0].id].state, 'COMPLETED');
 });
 
 test('Firebase REST의 null 포함 제출 배열도 UNKNOWN 예약을 유지하며 명확한 사유로 변경을 차단한다', async () => {

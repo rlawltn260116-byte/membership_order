@@ -17,13 +17,15 @@ import ExcelJS from 'exceljs';
 import * as policy from '../worker/order-runner/workbook-policy.mjs';
 import * as schedule from '../worker/order-runner/schedule.mjs';
 import * as vendorBoardModule from '../worker/order-runner/vendor-board.mjs';
+import * as centerQueueModule from '../worker/order-runner/center-queue.mjs';
+import supplierData from '../worker/order-runner/data/supplier-map.json' with { type: 'json' };
 import { splitDestination, analyzeDestination, centerOrderContext, DESTINATION_HOLD_REASON } from '../worker/order-runner/b2b-destination.mjs';
 import { submissionContent } from '../worker/order-runner/order-approval.mjs';
 import * as classification from '../worker/order-runner/order-classification.mjs';
 import { prepareHttpJob, runQueueVendor } from '../worker/order-runner/b2b-queue.mjs';
 import { workerHarness } from './helpers/order-worker-harness.mjs';
 
-async function screen() {
+async function screen({ centerQueue } = {}) {
   const source = await readFile('app/order-ops-app.tsx', 'utf8');
   const ast = ts.createSourceFile('screen.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let cursor = 0;
@@ -38,7 +40,16 @@ async function screen() {
     createOrderJob: async value => { const job = { ...value, id: saved.length ? `saved-${saved.length + 1}` : 'saved' }; saved.push(job); return job; },
     listOrderJobs: async () => saved,
     getOrderJob: async id => saved.find(job => job.id === id),
-    updateOrderJob: async (...args) => { writes.push(args); Object.assign(saved.find(job => job.id === args[0]), args[1]); return null; },
+    updateOrderJob: async (...args) => {
+      writes.push(args);
+      if (centerQueue) {
+        const root = { jobs: Object.fromEntries(saved.map(job => [job.id, job])), 'center-queue': centerQueue };
+        centerQueueModule.updateJobWithCenters(root, args[0], args[1], new Date().toISOString());
+        saved.splice(0, saved.length, ...Object.values(root.jobs));
+        return root.jobs[args[0]];
+      }
+      Object.assign(saved.find(job => job.id === args[0]), args[1]); return null;
+    },
     fetch: () => assert.fail('실제 사이트·Firebase 요청 금지') };
   for (const node of ast.statements.filter(ts.isImportDeclaration)) {
     const bindings = node.importClause?.namedBindings;
@@ -77,6 +88,38 @@ async function file(sheets) {
   }
   return new File([await book.xlsx.writeBuffer()], '20261112_직배(보필) 모의.xlsx');
 }
+
+test('통합 화면은 업체별 현황판·센터 메뉴를 보존하고 수동 완료·취소 핸들러가 센터 상태도 갱신한다', async () => {
+  const filename = '20261116_가상센터.xlsx', at = '2026-11-17T00:00:00.000Z';
+  const model = supplierData.records.find(row => row.supplier === '안앤락').model;
+  const book = new ExcelJS.Workbook();
+  const sheet = book.addWorksheet('센터');
+  sheet.addRows([['주문번호', '납품처', '납품처전화번호', '품명', '주문수량', '비고(내역)'],
+    ['', '가상시 모의로 1 /', '01000000000', model, 1, '모의센터']]);
+  const rows = centerQueueModule.parseCenterSheet(sheet, { filename, sourceDate: '2026-11-16', sourceWorkbook: policy.inspectWorkbook(book, filename) });
+  const entries = await centerQueueModule.prepareCenterEntries(rows, new Date(at));
+  const root = centerQueueModule.uploadCenterEntries({}, entries, 'parts', at);
+  const manufacturerFile = '20261117_직배(안앤락) 모의.xlsx';
+  centerQueueModule.createJobWithCenters(root, 'manual-center', { filename: manufacturerFile, sourceSystem: '안앤락', status: 'READY',
+    selectedSheet: '발주', sourceWorkbook: { filename: manufacturerFile, sheets: [{ name: '발주', state: 'visible', rowCount: 2, headers: [] }] },
+    rows: [{ lineNo: 2, sourceSheet: '발주', sourceSystem: '안앤락', productName: model, quantity: '1', status: 'READY', recipientName: '모의인', address: '가상시 모의로 1', recipientPhone: '01000000000' }] }, at);
+  const app = await screen({ centerQueue: root['center-queue'] });
+  app.saved.push(root.jobs['manual-center']); app.render();
+  await app.context.screenActions.loadJobs();
+  const html = renderToStaticMarkup(app.render());
+  assert.match(html, /오늘 업체별 발주/); assert.match(html, /센터 발주 대기열/);
+  await app.context.screenActions.markVendorOrderDone(app.saved[0]); app.render();
+  assert.equal(app.saved[0].status, 'COMPLETED');
+  assert.equal(root['center-queue'].entries[entries[0].id].state, 'COMPLETED');
+  await app.context.screenActions.undoVendorOrderDone(app.saved[0]); app.render();
+  assert.equal(app.saved[0].status, 'READY');
+  assert.equal(root['center-queue'].entries[entries[0].id].state, 'RESERVED');
+  assert.equal(root['center-queue'].entries[entries[0].id].jobId, 'manual-center');
+  const writes = app.writes.length;
+  await app.context.screenActions.queueExecution();
+  await app.context.screenActions.queueFinalSubmission('모의 승인');
+  assert.equal(app.writes.length, writes);
+});
 
 test('센터 업로드는 수취인 공란을 허용하고 미정 부품을 별도 보류 작업으로 저장·표시·실행 차단한다', async () => {
   const app = await screen(); app.render();
