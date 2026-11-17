@@ -5,7 +5,7 @@
   "source": "사용자 제공 시간표 이미지",
   "excluded": "공개 저장소이므로 회사코드, ID, 비밀번호, 업체 이메일·팩스 번호는 저장하지 않는다.",
   "schedule": [
-    { "vendor": "보필", "orderDeadline": "09:00", "receiptDeadline": "09:30", "method": "B2B몰", "url": "https://bofeelmall.com/", "statementChannel": "B2B몰" },
+    { "vendor": "보필", "orderDeadline": "09:00", "receiptDeadline": "09:30", "method": "B2B몰", "url": "https://bofeelmall.com/", "statementChannel": "이메일" },
     { "vendor": "세비앙", "orderDeadline": "09:30", "receiptDeadline": "10:00", "method": "ERP", "url": "https://c-portal.ecount.com/", "statementChannel": "ERP" },
     { "vendor": "선인케어", "orderDeadline": "09:30", "receiptDeadline": "10:00", "method": "카톡", "statementChannel": "카톡" },
     { "vendor": "현대메딕스", "orderDeadline": "09:30", "receiptDeadline": "10:00", "method": "카톡", "note": "현대메딕스 별도 양식", "statementChannel": "카톡" },
@@ -22,7 +22,7 @@
     { "vendor": "안앤락", "round": "13:00", "itemRoundGroups": [4, 5], "orderDeadline": "13:00", "receiptDeadline": "13:30", "method": "이메일", "statementChannel": "이메일" },
     { "vendor": "나눔에이치앤씨", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "B2B몰", "url": "https://www.nanumhnc.co.kr", "statementChannel": "B2B몰" },
     { "vendor": "엘에스케이화인텍스", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "카톡", "statementChannel": "카톡" },
-    { "vendor": "삼주유니콘", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "이메일", "note": "발주 접수 시 외부메일로 보낼 것", "statementChannel": "팩스" },
+    { "vendor": "삼주유니콘", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "이메일", "note": "발주 접수 시 외부메일로 보낼 것", "statementChannel": "이메일" },
     { "vendor": "안앤락", "round": "13:30", "itemRoundGroups": [6], "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "이메일", "statementChannel": "이메일" },
     { "vendor": "미키코리아", "orderDeadline": "13:30", "receiptDeadline": "14:00", "method": "카톡", "statementChannel": "이메일" },
     { "vendor": "THK", "round": "오후", "itemRoundGroups": [2], "appChannel": "이로움", "orderDeadline": "14:00", "receiptDeadline": "14:30", "method": "B2B몰", "url": "https://eroumcare.com/", "statementChannel": "이메일" },
