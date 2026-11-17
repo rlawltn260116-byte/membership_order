@@ -9,6 +9,7 @@ import WorkbookSheetPicker from "./workbook-sheet-picker";
 
 import { orderChannelGroups, normalizeChannelName, nextPreparation, scheduleLabel } from "../worker/order-runner/schedule.mjs";
 import { vendorBoard, boardSummary, vendorAction, entryForJob, jobOrderDone, uploadTargetProblem, orderDraft, orderSheetRows, printableOrderHtml, manualDonePatch, manualDoneUndoPatch, manualNoOrderPatch, manualNoOrderUndoPatch, ORDER_SHEET_HEADERS, BOARD_STATUS, BOARD_STATUS_LABEL, kstParts, type BoardEntry, type BoardItem, type VendorNoOrderRecord, type VendorOrderDone } from "../worker/order-runner/vendor-board.mjs";
+import { rowSections, rowCounts, type RowView } from "../worker/order-runner/row-groups.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -1623,7 +1624,7 @@ export default function OrderOpsApp() {
                 <TabsTrigger value="audit">작업 로그</TabsTrigger>
               </TabsList>
               <TabsContent value="rows" className="mt-4">
-                {rows.length ? <div className="space-y-4">{rows.map((row, index) => <article key={`${row.lineNo}-${index}`} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs text-slate-400">{row.sourceSystem} · 원본 {row.lineNo}행</p><h3 className="mt-2 font-semibold">{row.productName}</h3>{row.option ? <p className="mt-1 text-sm text-slate-500">{row.option}</p> : null}</div><Badge className={statusClass(row.status)}>{statusLabel(row.status)}</Badge></div><dl className="mt-4 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-3 border-t border-slate-100 pt-4 text-sm"><dt className="text-slate-400">원주문번호</dt><dd className="break-all">{row.orderId || "-"}</dd><dt className="text-slate-400">수량</dt><dd>{row.quantity}개</dd><dt className="text-slate-400">수취인</dt><dd>{row.centerOrder ? `센터 발주(수취인: ${row.recipientName || "미확정"})` : row.recipientName || "-"}{row.centerOrder ? <span className="mt-1 block text-xs text-slate-500">{row.centerOrderEvidence?.join(" · ")}</span> : null}<span className="mt-1 block text-xs text-slate-500">{row.recipientPhone}</span></dd><dt className="text-slate-400">배송지</dt><dd className="break-words leading-6">{row.address} {row.addressDetail}</dd><dt className="text-slate-400">배송 메모</dt><dd className="break-words">{row.memo || "-"}</dd>{row.reason ? <><dt className="text-slate-400">검증 사유</dt><dd className="leading-6">{row.reason}</dd></> : null}</dl></article>)}</div> : <EmptyState />}
+                <OrderRowsPanel rows={rows} />
               </TabsContent>
               <TabsContent value="review" className="mt-4">
                 {activeJob?.lastReport && !activeJob.report ? <section aria-label="이전 처리 결과" className="mb-4 rounded-lg border border-slate-200 p-4"><h3 className="font-semibold">이전 처리 결과 (센터 복귀·제외 전, 읽기 전용)</h3><p className="my-2 text-sm text-slate-600">이 결과는 승인에 사용할 수 없습니다. 사유를 확인한 뒤 남은 행의 서버 준비를 다시 진행해 주세요.</p><ul className="space-y-2 text-sm">{activeJob.lastReport.details.map((detail, index) => <li key={`${detail.lineNo}-${index}`}>{detail.lineNo}행 · {statusLabel(detail.status)} · {detail.reason}</li>)}</ul></section> : null}
@@ -2679,6 +2680,96 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
           ))}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+function OrderRowCard({ row }: { row: OrderRow }) {
+  return (
+    <article className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs text-slate-400">{row.sourceSystem} · 원본 {row.lineNo}행</p>
+          <h3 className="mt-2 font-semibold">{row.productName}</h3>
+          {row.option ? <p className="mt-1 text-sm text-slate-500">{row.option}</p> : null}
+        </div>
+        <Badge className={statusClass(row.status)}>{statusLabel(row.status)}</Badge>
+      </div>
+      <dl className="mt-4 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-3 border-t border-slate-100 pt-4 text-sm">
+        <dt className="text-slate-400">원주문번호</dt>
+        <dd className="break-all">{row.orderId || "-"}</dd>
+        <dt className="text-slate-400">수량</dt>
+        <dd>{row.quantity}개</dd>
+        <dt className="text-slate-400">수취인</dt>
+        <dd>
+          {row.centerOrder ? `센터 발주(수취인: ${row.recipientName || "미확정"})` : row.recipientName || "-"}
+          {row.centerOrder ? <span className="mt-1 block text-xs text-slate-500">{row.centerOrderEvidence?.join(" · ")}</span> : null}
+          <span className="mt-1 block text-xs text-slate-500">{row.recipientPhone}</span>
+        </dd>
+        <dt className="text-slate-400">배송지</dt>
+        <dd className="break-words leading-6">{row.address} {row.addressDetail}</dd>
+        <dt className="text-slate-400">배송 메모</dt>
+        <dd className="break-words">{row.memo || "-"}</dd>
+        {row.reason ? <><dt className="text-slate-400">검증 사유</dt><dd className="leading-6">{row.reason}</dd></> : null}
+      </dl>
+    </article>
+  );
+}
+
+// 주문 행을 정상·보류·실패로 나누고, 보류는 사유별로 묶어 보여 준다. 보기 전환은 화면 표시만 바꾼다.
+function OrderRowsPanel({ rows }: { rows: OrderRow[] }) {
+  const [view, setView] = useState<RowView>("all");
+  if (!rows.length) return <EmptyState />;
+  const counts = rowCounts(rows);
+  const sections = rowSections(rows, view);
+  const filters: { value: RowView; label: string; count: number }[] = [
+    { value: "all", label: "전체", count: counts.all },
+    { value: "hold", label: "보류", count: counts.hold },
+    { value: "failed", label: "실패", count: counts.failed },
+    { value: "ready", label: "정상", count: counts.ready },
+  ];
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="주문 행 보기">
+        {filters.map((filter) => (
+          <Button
+            key={filter.value}
+            size="sm"
+            variant={view === filter.value ? "default" : "outline"}
+            aria-pressed={view === filter.value}
+            disabled={filter.value !== "all" && filter.count === 0}
+            onClick={() => setView(filter.value)}
+          >
+            {filter.label} {filter.count}건
+          </Button>
+        ))}
+      </div>
+      {counts.hold > 0 ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
+          보류 {counts.hold}건 · 사유별로 묶어 맨 위에 표시합니다. 정상 행과 섞이지 않게 나눴습니다.
+        </p>
+      ) : null}
+      {sections.length === 0 ? <p className="text-sm text-slate-600">이 보기에 해당하는 행이 없습니다.</p> : null}
+      {sections.map((section) => (
+        <section
+          key={section.key}
+          aria-label={`${section.title} ${section.rows.length}건`}
+          className={section.key === "hold" ? "space-y-4 rounded-xl border border-amber-200 bg-amber-50/40 p-3" : "space-y-4"}
+        >
+          <h3 className="flex items-center gap-2 font-semibold">
+            <Badge className={statusClass(section.key === "hold" ? "HOLD" : section.key === "failed" ? "FAILED" : "READY")}>{section.title}</Badge>
+            {section.rows.length}건
+          </h3>
+          {section.groups.length
+            ? section.groups.map((group) => (
+                <div key={group.label} className="space-y-3">
+                  <p className="text-sm font-semibold text-amber-900">사유: {group.label} · {group.rows.length}건</p>
+                  {group.rows.map((row, index) => <OrderRowCard key={`${group.label}-${row.lineNo}-${index}`} row={row} />)}
+                </div>
+              ))
+            : section.rows.map((row, index) => <OrderRowCard key={`${section.key}-${row.lineNo}-${index}`} row={row} />)}
+        </section>
+      ))}
     </div>
   );
 }
