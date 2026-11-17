@@ -501,6 +501,9 @@ test('업체 카드로 올린 카톡 업체 발주서는 그 업체·회차로 �
   assert.ok(overview.includes('aria-label="업체별 발주 현황"'));
   assert.ok(overview.includes('aria-label="선인케어 발주 완료"'));
   assert.ok(overview.includes('aria-label="보필 발주 전"'));
+  assert.ok(overview.includes('role="checkbox"'));
+  assert.ok(overview.includes('발주없음 표시'));
+  assert.ok(!overview.includes('오늘 발주없음으로 표시할까요?'));
   assert.ok(overview.indexOf('보필 발주 전') < overview.indexOf('선인케어 발주 완료'));
   await app.context.screenActions.undoVendorOrderDone(app.saved[0]);
   assert.equal(app.writes[1][1].status, 'READY');

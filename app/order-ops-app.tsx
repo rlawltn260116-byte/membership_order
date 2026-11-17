@@ -703,7 +703,7 @@ function buildCalendarDays(monthDate: Date, jobs: Job[]) {
   });
 }
 
-function OverviewPage({ jobs, noOrders, onOpenJob, onOpenInventory, onSelectVendor }: { jobs: Job[]; noOrders: VendorNoOrderRecord[]; onOpenJob: (id: string) => void; onOpenInventory: () => void; onSelectVendor: (key: string) => void }) {
+function OverviewPage({ jobs, noOrders, onOpenJob, onOpenInventory, onSelectVendor, onToggleNoOrder }: { jobs: Job[]; noOrders: VendorNoOrderRecord[]; onOpenJob: (id: string) => void; onOpenInventory: () => void; onSelectVendor: (key: string) => void; onToggleNoOrder: (item: BoardItem<Job>) => void }) {
   const steps = ["발주 접수", "데이터 검증", "운영자 승인", "주문 실행", "결과 확인", "명세서 검수", "입출고 등록"];
   const columns = [
     { title: "검토 필요", hint: "입력값과 예외를 확인하세요", color: "amber", statuses: ["HOLD", "FAILED"] },
@@ -712,7 +712,7 @@ function OverviewPage({ jobs, noOrders, onOpenJob, onOpenInventory, onSelectVend
   ];
   return (
     <div className="space-y-6">
-      <VendorBoardSection jobs={jobs} noOrders={noOrders} onSelect={onSelectVendor} />
+      <VendorBoardSection jobs={jobs} noOrders={noOrders} onSelect={onSelectVendor} onToggleNoOrder={onToggleNoOrder} />
       <section className="rounded-2xl border border-slate-200/70 bg-white px-5 py-6">
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 xl:grid-cols-7">
           {steps.map((step, index) => (
@@ -779,7 +779,7 @@ function methodIcon(kind: string | undefined) {
 }
 
 // 시간표 순서로 오늘의 업체 회차를 나열한다. 카드를 누르면 발주 형태별 창이 열린다.
-function VendorBoardSection({ jobs, noOrders, onSelect }: { jobs: Job[]; noOrders: VendorNoOrderRecord[]; onSelect: (key: string) => void }) {
+function VendorBoardSection({ jobs, noOrders, onSelect, onToggleNoOrder }: { jobs: Job[]; noOrders: VendorNoOrderRecord[]; onSelect: (key: string) => void; onToggleNoOrder: (item: BoardItem<Job>) => void }) {
   const now = new Date();
   const board = vendorBoard(jobs, now, noOrders);
   const summary = boardSummary(board);
@@ -806,7 +806,8 @@ function VendorBoardSection({ jobs, noOrders, onSelect }: { jobs: Job[]; noOrder
             <p className="pt-3 text-sm font-bold text-slate-700">{time}</p>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
               {board.filter((item) => (item.entry.orderDeadline ?? "마감 미정") === time).map((item) => (
-                <button key={item.key} type="button" aria-label={`${boardName(item.entry)} ${item.statusLabel}`} onClick={() => onSelect(item.key)} className={`group rounded-xl border bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${item.overdue ? "border-rose-200" : "border-slate-200/80"}`}>
+                <div key={item.key} className={`relative rounded-xl border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${item.status === "DONE" ? "border-emerald-200 bg-emerald-50/70" : item.status === "IN_PROGRESS" ? "border-amber-200 bg-amber-50/60" : item.status === BOARD_STATUS.NO_ORDER ? "border-sky-200 bg-sky-50/70" : item.overdue ? "border-rose-200 bg-rose-50/40" : "border-slate-200/80 bg-white"}`}>
+                <button type="button" aria-label={`${boardName(item.entry)} ${item.statusLabel}`} onClick={() => onSelect(item.key)} className="group w-full rounded-xl p-3 pr-12 text-left">
                   <div className="flex items-start justify-between gap-2">
                     <span className="min-w-0"><span className="block truncate text-sm font-semibold">{boardName(item.entry)}</span>{item.entry.vendor !== item.entry.channel ? <span className="block text-[11px] text-slate-400">{item.entry.vendor}</span> : null}</span>
                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${boardStatusClass(item.status)}`}>{item.statusLabel}</span>
@@ -815,6 +816,8 @@ function VendorBoardSection({ jobs, noOrders, onSelect }: { jobs: Job[]; noOrder
                   {item.jobs.length ? <p className="mt-1 text-[11px] text-slate-500">오늘 발주서 {item.jobs.length}개{item.waitingReview ? " · 서버 처리·검토 중" : ""}</p> : null}
                   {item.overdue ? <p className="mt-1 text-[11px] font-semibold text-rose-600">발주마감 지남</p> : null}
                 </button>
+                {!item.jobs.length ? <button type="button" role="checkbox" aria-checked={item.status === BOARD_STATUS.NO_ORDER} aria-label={`${boardName(item.entry)} 발주없음 표시`} onClick={() => onToggleNoOrder(item)} className={`absolute bottom-3 right-3 flex h-7 w-7 items-center justify-center rounded-md border text-sm font-bold transition ${item.status === BOARD_STATUS.NO_ORDER ? "border-sky-600 bg-sky-600 text-white" : "border-slate-300 bg-white text-transparent hover:border-sky-500 hover:bg-sky-50"}`}>✓</button> : null}
+                </div>
               ))}
             </div>
           </div>
@@ -977,19 +980,7 @@ function VendorOrderDialog({ item, loading, notice, onClose, onUpload, onOpenJob
                 <Button variant="outline" size="sm" disabled={loading} onClick={() => onUndoNoOrder(item)}><Undo2 className="h-4 w-4" />발주없음 표시 취소</Button>
               </div>
             ) : item.status === BOARD_STATUS.BEFORE ? (
-              <AlertDialog>
-                <AlertDialogTrigger asChild><Button variant="outline" disabled={loading}>발주없음</Button></AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{boardName(entry)} 오늘 발주없음으로 표시할까요?</AlertDialogTitle>
-                    <AlertDialogDescription>오늘 이 업체에 보낼 발주가 없을 때만 누르세요. 메일·팩스·카톡을 보내지 않고 발주없음 표시만 남깁니다. 나중에 이 업체 발주서를 올리면 발주서 상태가 우선 표시됩니다.</AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>취소</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => onNoOrder(item)}>발주없음 표시</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+              <Button variant="outline" disabled={loading} onClick={() => onNoOrder(item)}>발주없음 표시</Button>
             ) : null}
             <p className="text-xs text-slate-500">{action?.kind === "B2B_AUTO" ? "업로드하면 주문 관리 화면에서 시트 확인·저장 후 서버 준비 요청을 진행합니다. 실제 제출은 검토와 최종 승인 뒤에만 실행됩니다." : "업로드하면 주문 관리 화면에서 시트 확인·저장한 뒤, 이 창이나 주문 상세에서 발주 형태에 맞는 초안을 만들고 보낸 뒤 완료 표시합니다."}</p>
             {notice ? <p className="rounded-lg bg-[#fff8e6] px-3 py-2 text-sm text-slate-800">{notice}</p> : null}
@@ -1536,7 +1527,7 @@ export default function OrderOpsApp() {
             </section> : null}
 
         {viewMode === "overview" ? (
-          <OverviewPage jobs={jobs} noOrders={vendorNoOrders} onOpenJob={(id) => { setViewMode("orders"); void openJob(id); }} onOpenInventory={() => setViewMode("inventory")} onSelectVendor={(key) => { setVendorNotice(""); setVendorDialogKey(key); }} />
+          <OverviewPage jobs={jobs} noOrders={vendorNoOrders} onOpenJob={(id) => { setViewMode("orders"); void openJob(id); }} onOpenInventory={() => setViewMode("inventory")} onSelectVendor={(key) => { setVendorNotice(""); setVendorDialogKey(key); }} onToggleNoOrder={(item) => { if (item.status === BOARD_STATUS.NO_ORDER) void undoVendorNoOrder(item); else void markVendorNoOrder(item); }} />
         ) : viewMode === "center-queue" ? (
           <CenterOrderQueue jobs={jobs} onOpenJob={id => { setViewMode("orders"); void openJob(id); }} onChanged={() => loadJobs(true)} />
         ) : viewMode === "inventory" ? (
