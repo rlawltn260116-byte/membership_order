@@ -6,6 +6,19 @@ const suppliers = supplierLookup([{ vendor: '모의업체', appChannel: '모의�
 const row = (overrides = {}) => ({ 주문일자: '2026-11-06', 주문번호: 'TEST-1', 순번: '1', 소분류: '직배(모의업체)', 주문수량: '2', 미납수량: '2', ...overrides });
 const parse = (rows, processed = []) => parseAmaranthRows(rows, { asOf: '2026-11-06', processedOrderNumbers: new Set(processed), suppliers });
 
+test('승인된 아마란스 소분류는 품목 대응까지 확인한 뒤 회차에 연결한다', () => {
+  const suppliers = supplierLookup([{ vendor: 'THK', appChannel: '이로움' }, { vendor: '안앤락' }]);
+  const r = parseAmaranthRows([
+    row({ 소분류: '직배(THKC)_오후', 품명: 'DYJ-03' }),
+    row({ 주문번호: 'TEST-2', 소분류: '직배(안앤락)', 품명: '지팡이 나래-4000 / 와인' }),
+    row({ 주문번호: 'TEST-3', 소분류: '직배(THKC)_오전', 품명: 'DYJ-03' }),
+    row({ 주문번호: 'TEST-4', 소분류: '직배(THKC)_오전', 품명: 'CD-07' }),
+  ], { asOf: '2026-11-06', processedOrderNumbers: new Set(), suppliers });
+  assert.equal(r.bySupplier['이로움'][0].scheduleKey, '이로움|14:00');
+  assert.equal(r.bySupplier['안앤락'][0].scheduleKey, '안앤락|13:30');
+  assert.deepEqual(r.exceptions.map(row => row.reason), ['item_round_confirmation_needed', 'item_round_confirmation_needed']);
+});
+
 test('최근 30일은 기준일 포함이며 월 경계와 윤년을 처리한다', () => {
   assert.deepEqual(recentOrderPeriod('2026-11-06'), { start: '2026-10-08', end: '2026-11-06' });
   assert.equal(recentOrderPeriod('2024-03-01').start, '2024-02-01');

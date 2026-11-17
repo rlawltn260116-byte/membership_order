@@ -1,0 +1,206 @@
+{
+  "source": "사용자 제공 아마란스 소분류별 품목·마감 표 (2026-11-17)",
+  "deadlineMeaning": {
+    "orderDeadline": "사내 주문 마감",
+    "receiptDeadline": "업체 발주 마감"
+  },
+  "rounds": [
+    {
+      "group": 1,
+      "subcategory": "직배(THKC)_오전",
+      "channel": "이로움",
+      "round": "오전",
+      "scheduleKey": "이로움|10:00",
+      "orderDeadline": "10:00",
+      "receiptDeadline": "10:30",
+      "items": [
+        {
+          "model": "URB-SG001[G]",
+          "name": "안전손잡이 URB-SG001[G]"
+        },
+        {
+          "model": "SPORTY",
+          "name": "성인용보행기 SPORTY"
+        },
+        {
+          "model": "SLT-10",
+          "name": "성인용보행기 SLT-10",
+          "options": [
+            "블랙",
+            "오렌지"
+          ]
+        },
+        {
+          "model": "Handy",
+          "name": "성인용보행기 Handy"
+        },
+        {
+          "model": "MPG-07",
+          "name": "자세변환용구 MPG-07"
+        },
+        {
+          "model": "MPG-05",
+          "name": "자세변환용구 MPG-05"
+        },
+        {
+          "model": "MPG-06",
+          "name": "자세변환용구 MPG-06"
+        },
+        {
+          "model": "NSBS-PC5033",
+          "name": "자세변환용구 NSBS-PC5033"
+        }
+      ]
+    },
+    {
+      "group": 2,
+      "subcategory": "직배(THKC)_오후",
+      "channel": "이로움",
+      "round": "오후",
+      "scheduleKey": "이로움|14:00",
+      "orderDeadline": "14:00",
+      "receiptDeadline": "14:30",
+      "items": [
+        {
+          "model": "SC-2500",
+          "name": "미끄럼방지매트리스 SC-2500",
+          "options": [
+            "초록",
+            "회색"
+          ]
+        },
+        {
+          "model": "Let's Fly",
+          "name": "성인용보행기 Let's Fly",
+          "options": [
+            "그레이",
+            "레드"
+          ]
+        },
+        {
+          "model": "Let's Move",
+          "name": "성인용보행기 Let's Move",
+          "options": [
+            "블랙",
+            "그레이"
+          ]
+        },
+        {
+          "model": "SL-0680",
+          "name": "롤레이터 슬림핏(SL-0680)",
+          "options": [
+            "블랙",
+            "블루",
+            "레드"
+          ]
+        },
+        {
+          "model": "NA-101W",
+          "name": "수동휠체어 NA-101W",
+          "options": [
+            "(440/블랙)",
+            "(440/블루)"
+          ]
+        },
+        {
+          "model": "NA-101",
+          "name": "수동휠체어 NA-101",
+          "options": [
+            "(420/블랙)"
+          ]
+        },
+        {
+          "model": "DYJ-03",
+          "name": "자세변환용구 DYJ-03"
+        },
+        {
+          "model": "더안 탄소 레자 전기장판",
+          "name": "온열매트 더안 탄소 레자 전기장판"
+        }
+      ]
+    },
+    {
+      "group": 3,
+      "subcategory": "직배(안앤락-1130)",
+      "channel": "안앤락",
+      "round": "11:30",
+      "scheduleKey": "안앤락|11:30",
+      "orderDeadline": "11:30",
+      "receiptDeadline": "12:00",
+      "items": [
+        {
+          "model": "DBW6",
+          "name": "성인용보행기 DBW6"
+        },
+        {
+          "model": "ActiveFree OP5",
+          "name": "성인용보행기 ActiveFree OP5"
+        }
+      ]
+    },
+    {
+      "group": 4,
+      "subcategory": "직배 (안앤락-13시)",
+      "channel": "안앤락",
+      "round": "13:00",
+      "scheduleKey": "안앤락|13:00",
+      "orderDeadline": "13:00",
+      "receiptDeadline": "13:30",
+      "items": [
+        {
+          "model": "SM-DUB-002",
+          "name": "욕창예방매트리스 SM-DUB-002"
+        }
+      ]
+    },
+    {
+      "group": 5,
+      "subcategory": "직배(안앤락-보행기)",
+      "channel": "안앤락",
+      "round": "13:00",
+      "scheduleKey": "안앤락|13:00",
+      "orderDeadline": "13:00",
+      "receiptDeadline": "13:30",
+      "items": [
+        {
+          "model": "GC-R10",
+          "name": "성인용보행기 GC-R10"
+        },
+        {
+          "model": "스피릿x4",
+          "name": "성인용보행기 스피릿x4",
+          "options": [
+            "블랙"
+          ]
+        }
+      ]
+    },
+    {
+      "group": 6,
+      "subcategory": "직배(안앤락)",
+      "channel": "안앤락",
+      "round": "13:30",
+      "scheduleKey": "안앤락|13:30",
+      "orderDeadline": "13:30",
+      "receiptDeadline": "14:00",
+      "items": [
+        {
+          "model": "나래-4000",
+          "name": "지팡이 나래-4000",
+          "options": [
+            "블랙",
+            "와인"
+          ]
+        },
+        {
+          "model": "나래-1000",
+          "name": "지팡이 나래-1000",
+          "options": [
+            "블랙",
+            "와인"
+          ]
+        }
+      ]
+    }
+  ]
+}

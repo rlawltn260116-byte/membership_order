@@ -21,7 +21,7 @@ function manufacturer(channel = '보필', now = morning) {
   const filename = `20261117_직배(${channel})_모의.xlsx`;
   return { filename, sourceSystem: channel, selectedSheet: '발주', sourceWorkbook: source(filename), orderKind: 'STANDARD', status: 'READY',
     createdAt: now, rows: [{ lineNo: 2, sourceFile: filename, sourceDate: '20261117', sourceSheet: '발주', sourceSystem: channel,
-      productName: channel === '보필' ? 'BFSH10' : 'DYJ-03', quantity: '1', status: 'READY', recipientName: '모의인', recipientPhone: '01000000000',
+      productName: channel === '보필' ? 'BFSH10' : channel === '안앤락' ? 'DBW6' : 'DYJ-03', quantity: '1', status: 'READY', recipientName: '모의인', recipientPhone: '01000000000',
       zipcode: '00000', address: '가상시 모의로 1', addressDetail: '', memo: '' }] };
 }
 async function uploadRows(products = ['BFSH10'], filename = '20261116_가상센터.xlsx', sheets = ['발주']) {
@@ -38,6 +38,71 @@ async function fixture(products) {
   const root = core.uploadCenterEntries({}, prepared, 'parts', morning);
   return { root, prepared };
 }
+
+test('이로움과 안앤락은 품목 회차별 첫 작업에만 합치고 표 밖 상품은 대기한다', async () => {
+  const { root, prepared } = await fixture(['SPORTY', 'DYJ-03', 'DBW6', 'SM-DUB-002', 'GC-R10', '지팡이 나래-4000 / 와인', '욕창예방방석 CD-07']);
+  for (const [id, channel, key, count] of [
+    ['morning', '이로움', '이로움|10:00', 1], ['afternoon', 'THK', '이로움|14:00', 1],
+    ['a', '안앤락', '안앤락|11:30', 1], ['b', '안앤락', '안앤락|13:00', 2], ['c', '안앤락', '안앤락|13:30', 1],
+  ]) {
+    core.createJobWithCenters(root, id, { ...manufacturer(channel), scheduleKey: key }, morning);
+    assert.equal(root.jobs[id].rows.filter(row => row.centerQueueId).length, count, id);
+    core.createJobWithCenters(root, `${id}2`, { ...manufacturer(channel), scheduleKey: key }, morning);
+    assert.equal(root.jobs[`${id}2`].rows.length, 1);
+  }
+  assert.equal(root['center-queue'].entries[prepared.at(-1).id].state, 'WAITING');
+  const unknown = core.centerQueueGroups(root, new Date(morning)).find(group => group.deadline.label.startsWith('회차 확인 필요'));
+  assert.ok(unknown); assert.equal(unknown.alert, false); assert.equal(unknown.deadline.channel, null);
+  assert.throws(() => core.createCenterOnlyJob(root, 'unknown', '티에이치케이컴퍼니', morning), /검증 완료된 대기/);
+});
+
+test('회차별 마감 30분 전 경계·첫 작업·주말과 단독 작업의 회차 선택을 지킨다', async () => {
+  const { root } = await fixture(['SPORTY', 'DYJ-03']);
+  const groups = at => core.centerQueueGroups(root, new Date(at));
+  assert.equal(groups('2026-11-17T00:59:59Z').find(g => g.scheduleKey === '이로움|10:00').alert, false);
+  assert.equal(groups('2026-11-17T01:00:00Z').find(g => g.scheduleKey === '이로움|10:00').alert, true);
+  assert.equal(groups('2026-11-17T04:59:59Z').find(g => g.scheduleKey === '이로움|14:00').alert, false);
+  core.createJobWithCenters(root, 'morning', { ...manufacturer('이로움'), scheduleKey: '이로움|10:00' }, morning);
+  assert.equal(groups('2026-11-17T05:00:00Z').find(g => g.scheduleKey === '이로움|14:00').alert, true);
+  assert.equal(groups('2026-11-21T05:00:00Z').some(g => g.alert), false);
+  core.createCenterOnlyJob(root, 'only', '티에이치케이컴퍼니', morning, '이로움|14:00');
+  assert.equal(root.jobs.only.scheduleKey, '이로움|14:00'); assert.equal(root.jobs.only.rows.length, 1);
+  const both = (await fixture(['SPORTY', 'DYJ-03'])).root;
+  assert.throws(() => core.createCenterOnlyJob(both, 'both', '티에이치케이컴퍼니', morning), /회차를 선택/);
+  core.createCenterOnlyJob(both, 'only', '티에이치케이컴퍼니', morning, '이로움|10:00');
+  assert.equal(both.jobs.only.rows.length, 1);
+});
+
+test('ActiveFree OP5는 승인된 안앤락 11:30 작업에 합치고 표 밖 READY 상품도 사람이 제외할 수 있다', async () => {
+  const { root, prepared } = await fixture(['성인용보행기 ActiveFree OP5', '욕창예방방석 CD-07']);
+  assert.equal(prepared[0].supplier, '안앤락');
+  assert.equal(prepared[1].row.status, 'READY');
+  core.createJobWithCenters(root, 'op5', { ...manufacturer('안앤락'), scheduleKey: '안앤락|11:30' }, morning);
+  assert.equal(root.jobs.op5.rows[1].productName, '성인용보행기 ActiveFree OP5');
+  assert.equal(root['center-queue'].entries[prepared[1].id].state, 'WAITING');
+  core.excludeHeldCenterEntry(root, prepared[1].id, morning);
+  assert.equal(root['center-queue'].entries[prepared[1].id].state, 'EXCLUDED');
+  core.uploadCenterEntries(root, [prepared[1]], 'parts', morning);
+  assert.equal(root['center-queue'].entries[prepared[1].id].state, 'EXCLUDED');
+});
+
+test('예전 첫 작업 이력과 삭제는 다른 회차를 소비하지 않고 혼합·미확정 작업은 추측하지 않는다', async () => {
+  const { root } = await fixture(['SPORTY', 'DYJ-03']);
+  root.jobs = { old: { ...manufacturer('THK'), rows: [{ productName: 'SPORTY' }], createdAt: morning } };
+  root['center-queue'].firstJobs = { '2026-11-17_이로움': 'old' };
+  core.createJobWithCenters(root, 'morning', { ...manufacturer('이로움'), scheduleKey: '이로움|10:00' }, morning);
+  assert.equal(root.jobs.morning.rows.length, 1);
+  core.createJobWithCenters(root, 'afternoon', manufacturer('이로움'), morning);
+  assert.equal(root.jobs.afternoon.rows.length, 2);
+  core.deleteJobWithCenters(root, 'afternoon');
+  core.createJobWithCenters(root, 'again', manufacturer('이로움'), morning);
+  assert.equal(root.jobs.again.rows.length, 1);
+  const mixed = (await fixture(['SPORTY', 'DYJ-03'])).root;
+  const input = manufacturer('이로움'); input.rows.push({ ...input.rows[0], productName: 'SPORTY', lineNo: 3 });
+  core.createJobWithCenters(mixed, 'mixed', input, morning);
+  assert.equal(mixed.jobs.mixed.rows.length, 2);
+  assert.ok(Object.values(mixed['center-queue'].entries).every(entry => entry.state === 'WAITING'));
+});
 
 // 실제 브라우저 저장 어댑터를 가짜 ETag 서버에 연결한다. 두 읽기가 같은 버전을 볼 수 있다.
 async function firebase(initial = {}) {
@@ -164,7 +229,7 @@ test('센터가 포함된 보필 작업도 실제 워커의 검토·내용 승�
   assert.equal(root['center-queue'].entries[prepared[0].id].state, 'COMPLETED');
 });
 
-test('한국시간 날짜와 THK·티에이치케이컴퍼니·이로움 및 안앤락 다회차는 같은 첫 작업 이력이다', async () => {
+test('한국시간 날짜와 THK·티에이치케이컴퍼니·이로움 별칭과 같은 회차만 첫 작업 이력을 공유한다', async () => {
   assert.equal(core.koreaDay('2026-11-16T15:00:00Z'), '2026-11-17');
   const { root } = await fixture(['DYJ-03']);
   core.createJobWithCenters(root, 'first', manufacturer('THK'), morning);
@@ -172,8 +237,8 @@ test('한국시간 날짜와 THK·티에이치케이컴퍼니·이로움 및 안
   assert.equal(root.jobs.first.rows.length, 2);
   assert.equal(root.jobs.second.rows.length, 1);
   assert.equal(core.supplierChannel('티에이치케이컴퍼니'), '이로움');
-  assert.ok(core.centerDeadline('티에이치케이컴퍼니', new Date(morning)).receiptDeadlineAt.endsWith('01:30:00.000Z'));
-  const model = supplierData.records.find(row => row.supplier === '안앤락').model;
+  assert.ok(core.centerDeadline('티에이치케이컴퍼니', new Date(morning), '이로움|14:00').receiptDeadlineAt.endsWith('05:30:00.000Z'));
+  const model = 'DBW6';
   const other = (await fixture([model])).root;
   core.createJobWithCenters(other, 'a', manufacturer('안앤락'), morning);
   core.createJobWithCenters(other, 'b', manufacturer('안앤락'), '2026-11-17T04:00:00Z');
@@ -351,7 +416,7 @@ test('센터 단독 작업은 채널이 같아도 선택한 발주처의 검증 
 
 test('메일·팩스·카톡·ERP·직접 B2B의 수동 완료와 취소는 센터도 같은 트랜잭션에서 완료·예약으로 바꾼다', async () => {
   for (const channel of ['안앤락', '유광정밀', '현대메딕스', '세비앙', '나눔에이치앤씨']) {
-    const record = supplierData.records.find(row => core.supplierChannel(row.supplier) === channel);
+    const record = channel === '안앤락' ? { supplier: '안앤락', model: 'DBW6' } : supplierData.records.find(row => core.supplierChannel(row.supplier) === channel);
     assert.ok(record, channel);
     const { root, prepared } = await fixture([record.model]);
     const input = manufacturer(channel); input.rows[0].productName = record.model;
@@ -386,7 +451,7 @@ test('수동 완료 접점은 자동 B2B 승인·제출 우회와 업체·회차
     doneAt: morning, doneByName: '모의 담당자', method: 'B2B몰', scheduleKey: '보필|09:00', previousStatus: 'READY',
   } }), /수동 완료 표시/);
   assert.equal(autoDb.root['center-queue'].entries[automated.prepared[0].id].state, 'RESERVED');
-  const record = supplierData.records.find(row => row.supplier === '안앤락');
+  const record = { supplier: '안앤락', model: 'DBW6' };
   const { root, prepared } = await fixture([record.model]);
   core.createJobWithCenters(root, 'manual', manufacturer('안앤락'), morning);
   const db = await firebase(root);

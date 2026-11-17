@@ -4,15 +4,15 @@ export type CenterEntry = { id: string; supplier: string; channel: string | null
 export type CenterRoot = Record<string, unknown>;
 export function koreaDay(now?: Date | string): string;
 export function supplierChannel(supplier: string): string | null;
-export function centerDeadline(supplier: string, now?: Date): { channel: string | null; label: string; alert: boolean; receiptDeadlineAt?: string; alertAt?: string };
+export function centerDeadline(supplier: string, now?: Date, scheduleKey?: string | null): { channel: string | null; label: string; alert: boolean; receiptDeadlineAt?: string; alertAt?: string };
 export function parseCenterSheet(sheet: unknown, source: { filename: string; sourceDate: string; sourceWorkbook: SourceWorkbook }): CenterRow[];
 export function prepareCenterEntries(rows: CenterRow[], now?: Date): Promise<CenterEntry[]>;
 export function uploadCenterEntries(root: CenterRoot, prepared: CenterEntry[], partsJobId: string, now: string): CenterRoot;
 export function createJobWithCenters(root: CenterRoot, id: string, input: Record<string, unknown>, now: string): CenterRoot;
-export function createCenterOnlyJob(root: CenterRoot, id: string, supplier: string, now: string): CenterRoot;
+export function createCenterOnlyJob(root: CenterRoot, id: string, supplier: string, now: string, scheduleKey?: string): CenterRoot;
 export function centerReservationProblem(root: CenterRoot, job: unknown, expectedState?: 'RESERVED' | 'COMPLETED'): string | null;
 export function updateJobWithCenters(root: CenterRoot, id: string, patch: Record<string, unknown>, now: string, worker?: boolean): CenterRoot;
 export function removeCenterRow(root: CenterRoot, id: string, centerId: string, now: string): CenterRoot;
 export function excludeHeldCenterEntry(root: CenterRoot, id: string, now: string): CenterRoot;
 export function deleteJobWithCenters(root: CenterRoot, id: string): CenterRoot;
-export function centerQueueGroups(root: CenterRoot, now?: Date): Array<{ supplier: string; deadline: ReturnType<typeof centerDeadline>; entries: CenterEntry[]; alert: boolean }>;
+export function centerQueueGroups(root: CenterRoot, now?: Date): Array<{ key: string; supplier: string; scheduleKey: string | null; deadline: ReturnType<typeof centerDeadline>; entries: CenterEntry[]; alert: boolean }>;

@@ -1,6 +1,7 @@
 // 로컬 분석 전용. 큐, 네트워크, 처리 이력 쓰기를 수행하지 않는다.
 import ExcelJS from 'exceljs';
 import { selectWorksheet } from '../worker/order-runner/workbook-policy.mjs';
+import { itemRounds, itemRound } from '../worker/order-runner/item-rounds.mjs';
 
 const text = value => String(value ?? '').trim();
 const normalize = value => text(value).replace(/\s+/g, '');
@@ -34,6 +35,9 @@ export function supplierLookup(schedule, aliases = {}) {
     }
   }
   // 별칭은 호출자가 확인한 값만 전달한다. 시간/품목 접미사는 추측하지 않는다.
+  for (const round of itemRounds) {
+    if (result.has(normalize(round.channel))) result.set(normalize(round.subcategory), round.channel);
+  }
   for (const [alias, target] of Object.entries(aliases)) {
     if (!result.has(normalize(target))) throw new Error('별칭 대상이 시간표에 없습니다.');
     result.set(normalize(alias), result.get(normalize(target)));
@@ -94,13 +98,17 @@ export function parseAmaranthRows(rows, { asOf, processedOrderNumbers, suppliers
     if (!category) { exception('missing_subcategory'); continue; }
     const name = category.match(/^직배\s*\(([^)]+)\)(.*)$/);
     const lookupName = name && !text(name[2]) ? name[1] : category;
-    const supplier = suppliers.get(normalize(lookupName));
+    const supplier = suppliers.get(normalize(category)) || suppliers.get(normalize(lookupName));
     if (!supplier) { exception('unmapped_subcategory'); continue; }
+    const declaredRound = itemRounds.find(round => normalize(round.subcategory) === normalize(category));
+    const matchedRound = declaredRound && itemRound(supplier, row['품명']);
+    if (declaredRound && (!matchedRound || matchedRound.group !== declaredRound.group)) { exception('item_round_confirmation_needed'); continue; }
     if (!item.line) { exception('missing_line'); continue; }
     const key = JSON.stringify([orderNumber, item.line]);
     if (seen.has(key)) { exception('duplicate_line'); continue; }
     seen.add(key);
     const parsed = { ...item, supplier, quantity: ordered, productCode: text(row['품번']), product: text(row['품명']), delivery: splitDelivery(row), deliveryNotes: Object.fromEntries(['비고(건)', '비고(내역)', '납품처'].map(k => [k, text(row[k])])) };
+    if (matchedRound) parsed.scheduleKey = matchedRound.scheduleKey;
     (result.bySupplier[supplier] ??= []).push(parsed);
   }
   return result;

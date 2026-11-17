@@ -71,9 +71,9 @@ export default function CenterOrderQueue({ jobs, onOpenJob, onChanged }: { jobs:
     } catch (error) { setMessage(error instanceof Error ? error.message : '센터 저장 실패'); }
     finally { setBusy(false); }
   }
-  async function makeJob(supplier: string) {
+  async function makeJob(supplier: string, scheduleKey?: string | null) {
     setBusy(true);
-    try { const id = await makeCenterOnlyJob(supplier); await refresh(); await onChanged(); onOpenJob(id); }
+    try { const id = await makeCenterOnlyJob(supplier, scheduleKey || undefined); await refresh(); await onChanged(); onOpenJob(id); }
     catch (error) { setMessage(error instanceof Error ? error.message : '센터 작업 생성 실패'); }
     finally { setBusy(false); }
   }
@@ -90,7 +90,7 @@ export default function CenterOrderQueue({ jobs, onOpenJob, onChanged }: { jobs:
   return <section aria-label="센터 발주 대기열" className="space-y-5">
     <div className="rounded-2xl border bg-white p-5">
       <h2 className="text-lg font-semibold">센터 발주 대기열</h2>
-      <p className="my-3 text-sm text-slate-600">전날 센터 발주서를 다음 날 아침 한 번 올립니다. 발주처별 오늘 첫 제조사 작업에 자동으로 합칩니다. 기준일: {koreaDay(now)} (한국시간)</p>
+      <p className="my-3 text-sm text-slate-600">전날 센터 발주서를 다음 날 아침 한 번 올립니다. 발주처별 오늘 첫 제조사 작업에 자동으로 합칩니다. 이로움·안앤락은 품목이 속한 회차의 첫 작업에 합치며 회차 확인 필요 상품은 자동 포함하지 않습니다. 기준일: {koreaDay(now)} (한국시간)</p>
       <p className="my-3 text-sm text-slate-600">검증 완료된 상품만 작업에 포함합니다. 검증 보류 상품은 사유를 확인하고 같은 파일명·날짜·시트·행의 수정본을 다시 올리거나 아래에서 제외해 주세요.</p>
       <Button disabled={busy} onClick={() => input.current?.click()}>센터 발주 올리기</Button>
       <Button className="ml-2" disabled={busy} variant="outline" onClick={() => void refresh().catch(() => setMessage('센터 대기열 조회 실패'))}>대기열 새로고침</Button>
@@ -108,20 +108,20 @@ export default function CenterOrderQueue({ jobs, onOpenJob, onChanged }: { jobs:
     </article>)}
     {uploads.length ? <Button disabled={busy || uploads.some(file => file.error || !file.rows.length)} onClick={() => void save()}>센터 대기열에 저장</Button> : null}
     {!groups.length ? <p className="rounded-2xl border bg-white p-5 text-sm">센터 발주 대기열이 비어 있습니다.</p> : null}
-    {groups.map(group => <article key={group.supplier} className="overflow-hidden rounded-2xl border bg-white">
+    {groups.map(group => <article key={group.key} className="overflow-hidden rounded-2xl border bg-white">
       <div className="p-5"><h3 className="font-semibold">{group.supplier}</h3><p className="mt-2 text-sm">오늘 {group.deadline.label} (한국시간)</p>
-        {group.alert ? <div role="alert" className="mt-3 rounded-lg bg-amber-50 p-3"><strong>센터 상품 미발주</strong><p className="my-2 text-sm">첫 접수마감 30분 전입니다. 오늘 제조사 발주서가 없고 대기 중인 센터 상품이 있습니다. 검증 보류 행은 수정본을 올려 주세요.</p><Button disabled={busy || !group.entries.some(entry => entry.state === 'WAITING' && entry.row.status === 'READY')} onClick={() => void makeJob(group.supplier)}>센터 상품만 따로 주문 만들기</Button></div> : null}
-        {!group.alert && group.deadline.channel && group.entries.some(entry => entry.state === 'WAITING' && entry.row.status === 'READY') ? <Button className="mt-3" variant="outline" disabled={busy} onClick={() => void makeJob(group.supplier)}>센터 상품만 따로 주문 만들기</Button> : null}
+        {group.alert ? <div role="alert" className="mt-3 rounded-lg bg-amber-50 p-3"><strong>센터 상품 미발주</strong><p className="my-2 text-sm">해당 회차의 업체 발주마감 30분 전입니다. 오늘 해당 회차의 제조사 발주서가 없고 대기 중인 센터 상품이 있습니다. 검증 보류 행은 수정본을 올려 주세요.</p><Button disabled={busy || !group.entries.some(entry => entry.state === 'WAITING' && entry.row.status === 'READY')} onClick={() => void makeJob(group.supplier, group.scheduleKey)}>센터 상품만 따로 주문 만들기</Button></div> : null}
+        {!group.alert && group.deadline.channel && group.entries.some(entry => entry.state === 'WAITING' && entry.row.status === 'READY') ? <Button className="mt-3" variant="outline" disabled={busy} onClick={() => void makeJob(group.supplier, group.scheduleKey)}>센터 상품만 따로 주문 만들기</Button> : null}
       </div>
       <div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left text-sm">
         <thead className="bg-slate-50"><tr>{['품명', '센터', '수량', '수취인(센터명)', '원본 파일', '상태'].map(label => <th key={label} className="p-3">{label}</th>)}</tr></thead>
         <tbody>{group.entries.map(entry => <tr key={entry.id} className="border-t">
           <td className="p-3">{entry.row.productName}</td><td className="p-3">{entry.row.centerName || '미확정'}</td><td className="p-3">{entry.row.quantity}</td><td className="p-3">{entry.row.recipientName || '미확정'}</td>
           <td className="max-w-64 break-all p-3">{entry.row.sourceFile}<span className="block text-xs text-slate-500">{entry.row.sourceDate} · {entry.row.sourceSheet} · {entry.row.sourceLineNo}행</span></td>
-          <td className="p-3">{stateLabel[entry.state] || entry.state}{entry.state === 'WAITING' && entry.row.status !== 'READY' ? ' · 검증 보류' : ''}
+          <td className="p-3">{stateLabel[entry.state] || entry.state}{entry.state === 'WAITING' && entry.row.status !== 'READY' ? ' · 검증 보류' : ''}{entry.state === 'WAITING' && group.deadline.label.startsWith('회차 확인 필요') ? ' · 회차 확인 필요(표에 없음)' : ''}
             {entry.jobId ? <button className="mt-1 block break-all text-xs text-emerald-800 underline" onClick={() => onOpenJob(entry.jobId!)}>{entry.jobId}</button> : null}
             {entry.row.reason ? <span className="mt-1 block text-xs text-amber-800">{String(entry.row.reason)}</span> : null}
-            {entry.state === 'WAITING' && entry.row.status !== 'READY' ? <Button className="mt-2" variant="outline" disabled={busy} onClick={() => void excludeHeld(entry.id)}>보류 항목 제외</Button> : null}
+            {entry.state === 'WAITING' && (entry.row.status !== 'READY' || group.deadline.label.startsWith('회차 확인 필요')) ? <Button className="mt-2" variant="outline" disabled={busy} onClick={() => void excludeHeld(entry.id)}>{group.deadline.label.startsWith('회차 확인 필요') ? '회차 미확정 항목 제외' : '보류 항목 제외'}</Button> : null}
           </td>
         </tr>)}</tbody>
       </table></div>

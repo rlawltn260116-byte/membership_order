@@ -5,6 +5,7 @@ import { classifyOrderRow, PARTS_ORDER_KIND, PARTS_ORDER_LABEL } from './order-c
 import { analyzeDestination, centerOrderContext } from './b2b-destination.mjs';
 import { workbookProblem, worksheetMatrix } from './workbook-policy.mjs';
 import { entryForJob, manualDonePatch, manualDoneUndoPatch, vendorAction } from './vendor-board.mjs';
+import { hasItemRounds, itemRound } from './item-rounds.mjs';
 
 const norm = value => String(value ?? '').normalize('NFC').replace(/\s+/g, ' ').trim();
 export const koreaDay = (now = new Date()) => new Date(new Date(now).getTime() + 9 * 3600000).toISOString().slice(0, 10);
@@ -15,13 +16,14 @@ export function supplierChannel(supplier) {
   return deliverySchedule.some(entry => entry.channel === channel) ? channel : null;
 }
 const channelFor = value => supplierChannel(value) || normalizeChannelName(value);
-export function centerDeadline(supplier, now = new Date()) {
+export function centerDeadline(supplier, now = new Date(), scheduleKey) {
   const channel = supplierChannel(supplier);
-  const entries = deliverySchedule.filter(entry => entry.channel === channel && entry.receiptDeadline).sort((a, b) => a.receiptDeadline.localeCompare(b.receiptDeadline));
+  if (hasItemRounds(channel) && !scheduleKey) return { channel: null, label: '회차 확인 필요(표에 없음)', alert: false };
+  const entries = deliverySchedule.filter(entry => entry.channel === channel && entry.receiptDeadline && (!scheduleKey || `${entry.channel}|${entry.orderDeadline}` === scheduleKey)).sort((a, b) => a.receiptDeadline.localeCompare(b.receiptDeadline));
   if (!entries.length) return { channel: null, label: '발주 시각·방식 미정', alert: false };
   const first = entries[0];
   const at = new Date(`${koreaDay(now)}T${first.receiptDeadline}:00+09:00`);
-  return { channel, label: entries.map(entry => `${entry.round ? entry.round + ' ' : ''}${entry.receiptDeadline} 접수마감`).join(' / '),
+  return { channel, label: entries.map(entry => `${entry.round ? entry.round + ' ' : ''}${entry.orderDeadline} 사내 주문마감 · ${entry.receiptDeadline} 접수마감(업체 발주마감)`).join(' / '),
     receiptDeadlineAt: at.toISOString(), alertAt: new Date(at.getTime() - 30 * 60000).toISOString(),
     alert: new Date(now).getTime() >= at.getTime() - 30 * 60000 && ![0, 6].includes(new Date(`${koreaDay(now)}T00:00:00Z`).getUTCDay()) };
 }
@@ -89,9 +91,19 @@ const jobs = root => root.jobs ??= {};
 const firstJobs = root => queue(root).firstJobs ??= {};
 const dayKey = (day, channel) => `${day}_${encodeURIComponent(channel).replaceAll('.', '%2E')}`;
 const isManufacturer = job => job.orderKind !== PARTS_ORDER_KIND && job.orderOrigin !== 'CENTER_ONLY';
-function firstManufacturer(root, channel, day) {
-  return firstJobs(root)[dayKey(day, channel)] || Object.entries(jobs(root)).find(([, job]) =>
-    isManufacturer(job) && job.createdAt && koreaDay(job.createdAt) === day && channelFor(job.sourceSystem) === channel)?.[0];
+const rowRound = (channel, row) => itemRound(channel, row.productName, row.option)?.scheduleKey || null;
+function jobRound(job, channel) {
+  if (!hasItemRounds(channel)) return null;
+  const keys = [...new Set((job.rows || []).filter(row => !row.centerQueueId).map(row => rowRound(channel, row)))];
+  const saved = job.scheduleKey;
+  if (saved) return deliverySchedule.some(entry => entry.channel === channel && `${channel}|${entry.orderDeadline}` === saved) ? saved : null;
+  return keys.length === 1 ? keys[0] : null;
+}
+const historyChannel = (channel, round) => round || channel;
+function firstManufacturer(root, channel, day, round) {
+  return firstJobs(root)[dayKey(day, historyChannel(channel, round))] || Object.entries(jobs(root)).find(([, job]) =>
+    isManufacturer(job) && job.createdAt && koreaDay(job.createdAt) === day && channelFor(job.sourceSystem) === channel &&
+    (!hasItemRounds(channel) || jobRound(job, channel) === round))?.[0];
 }
 function summarize(job) {
   job.totalRows = job.rows.length;
@@ -108,11 +120,12 @@ function invalidate(job, now) {
   job.status = job.rows.some(row => row.status !== 'READY') ? 'HOLD' : 'READY';
   summarize(job);
 }
-function reserve(root, job, channel, now, supplier) {
+function reserve(root, job, channel, now, supplier, round) {
   let line = Math.max(0, ...(job.rows || []).map(row => Number(row.lineNo) || 0));
   for (const entry of Object.values(entries(root))) {
     if (entry.state !== 'WAITING' || entry.row.status !== 'READY' || entry.channel !== channel ||
-        (supplier && entry.supplier !== supplier) || entry.uploadedDay > koreaDay(now)) continue;
+        (supplier && entry.supplier !== supplier) || entry.uploadedDay > koreaDay(now) ||
+        (hasItemRounds(channel) && (!round || rowRound(channel, entry.row) !== round))) continue;
     entry.state = 'RESERVED'; entry.jobId = job.id; entry.reservedAt = now;
     job.rows.push({ ...entry.row, lineNo: ++line, centerQueueId: entry.id, sourceSystem: channel });
   }
@@ -147,11 +160,13 @@ export function createJobWithCenters(root, id, input, now) {
   if (jobs(root)[id]) throw new Error('이미 저장한 작업입니다. 목록을 새로 불러오세요.');
   const job = { ...input, id, rows: [...(input.rows || [])], createdAt: now, updatedAt: now };
   const channel = supplierChannel(job.sourceSystem);
-  if (channel && isManufacturer(job)) {
+  const round = jobRound(job, channel);
+  if (round) job.scheduleKey = round;
+  if (channel && isManufacturer(job) && (!hasItemRounds(channel) || round)) {
     const day = koreaDay(now);
-    const first = firstManufacturer(root, channel, day);
+    const first = firstManufacturer(root, channel, day, round);
     if (!first) {
-      firstJobs(root)[dayKey(day, channel)] = id; reserve(root, job, channel, now);
+      firstJobs(root)[dayKey(day, historyChannel(channel, round))] = id; reserve(root, job, channel, now, undefined, round);
       if (['HOLD', 'FAILED'].includes(job.status)) {
         release(root, job, job.rows.filter(row => row.centerQueueId).map(row => row.centerQueueId));
         job.status = job.failedRows ? 'FAILED' : job.holdRows ? 'HOLD' : 'READY';
@@ -161,17 +176,25 @@ export function createJobWithCenters(root, id, input, now) {
   jobs(root)[id] = job;
   return root;
 }
-export function createCenterOnlyJob(root, id, supplier, now) {
+export function createCenterOnlyJob(root, id, supplier, now, scheduleKey) {
   if (jobs(root)[id]) throw new Error('이미 저장한 작업입니다. 목록을 새로 불러오세요.');
   const channel = supplierChannel(supplier);
   if (!channel) throw new Error('발주 시각·방식 미정 업체입니다. 시간표를 먼저 확인해 주세요.');
-  const pending = Object.values(entries(root)).filter(entry => entry.state === 'WAITING' && entry.row.status === 'READY' && entry.supplier === supplier && entry.uploadedDay <= koreaDay(now));
+  let pending = Object.values(entries(root)).filter(entry => entry.state === 'WAITING' && entry.row.status === 'READY' && entry.supplier === supplier && entry.uploadedDay <= koreaDay(now));
+  if (hasItemRounds(channel)) {
+    pending = pending.filter(entry => rowRound(channel, entry.row));
+    const rounds = [...new Set(pending.map(entry => rowRound(channel, entry.row)))];
+    if (!scheduleKey && rounds.length > 1) throw new Error('센터 상품의 회차를 선택해 주세요.');
+    scheduleKey ||= rounds[0];
+    pending = pending.filter(entry => rowRound(channel, entry.row) === scheduleKey);
+  }
   if (!pending.length) throw new Error('검증 완료된 대기 센터 상품이 없습니다. 보류 사유를 확인해 주세요.');
   const row = pending[0].row;
   const job = { id, orderOrigin: 'CENTER_ONLY', orderKind: 'STANDARD', filename: row.sourceFile, selectedSheet: row.selectedSheet,
     sourceWorkbook: row.sourceWorkbook, sourceSystem: channel, status: 'READY', rows: [], createdAt: now, updatedAt: now,
     createdByName: '주문 운영자', updatedByName: '주문 운영자', createdByEmail: '', updatedByEmail: '' };
-  reserve(root, job, channel, now, supplier);
+  if (scheduleKey) job.scheduleKey = scheduleKey;
+  reserve(root, job, channel, now, supplier, scheduleKey);
   jobs(root)[id] = job;
   return root;
 }
@@ -274,7 +297,8 @@ export function removeCenterRow(root, id, centerId, now) {
 }
 export function excludeHeldCenterEntry(root, id, now) {
   const entry = entries(root)[id];
-  if (!entry || entry.state !== 'WAITING' || entry.row.status === 'READY' || entry.jobId) throw new Error('예약 전 검증 보류 센터 상품만 제외할 수 있습니다.');
+  const roundUnknown = entry && hasItemRounds(supplierChannel(entry.supplier)) && !rowRound(supplierChannel(entry.supplier), entry.row);
+  if (!entry || entry.state !== 'WAITING' || (entry.row.status === 'READY' && !roundUnknown) || entry.jobId) throw new Error('예약 전 검증 보류 또는 회차 확인 필요 센터 상품만 제외할 수 있습니다.');
   entry.state = 'EXCLUDED'; entry.excludedAt = now;
   return root;
 }
@@ -285,20 +309,24 @@ export function deleteJobWithCenters(root, id) {
   release(root, job, (job.rows || []).filter(row => row.centerQueueId).map(row => row.centerQueueId));
   // 삭제해도 그날 첫 제조사 작업 이력을 유지한다.
   const channel = supplierChannel(job.sourceSystem);
-  if (channel && isManufacturer(job)) firstJobs(root)[dayKey(koreaDay(job.createdAt), channel)] ||= id;
+  const round = jobRound(job, channel);
+  if (channel && isManufacturer(job) && (!hasItemRounds(channel) || round)) firstJobs(root)[dayKey(koreaDay(job.createdAt), historyChannel(channel, round))] ||= id;
   delete jobs(root)[id];
   return root;
 }
 export function centerQueueGroups(root, now = new Date()) {
   const groups = new Map();
   for (const entry of Object.values(root?.['center-queue']?.entries || {})) {
-    if (!groups.has(entry.supplier)) {
-      const deadline = centerDeadline(entry.supplier, now);
-      groups.set(entry.supplier, { supplier: entry.supplier, deadline, entries: [], alert: false });
+    const channel = supplierChannel(entry.supplier);
+    const scheduleKey = rowRound(channel, entry.row);
+    const groupKey = `${entry.supplier}|${scheduleKey || ''}`;
+    if (!groups.has(groupKey)) {
+      const deadline = centerDeadline(entry.supplier, now, scheduleKey);
+      groups.set(groupKey, { key: groupKey, supplier: entry.supplier, scheduleKey, deadline, entries: [], alert: false });
     }
-    groups.get(entry.supplier).entries.push(entry);
+    groups.get(groupKey).entries.push(entry);
   }
   for (const group of groups.values()) group.alert = group.deadline.alert && group.entries.some(entry => entry.state === 'WAITING') &&
-    !firstManufacturer(root, group.deadline.channel, koreaDay(now));
+    !firstManufacturer(root, group.deadline.channel, koreaDay(now), group.scheduleKey);
   return [...groups.values()].sort((a, b) => a.supplier.localeCompare(b.supplier, 'ko'));
 }

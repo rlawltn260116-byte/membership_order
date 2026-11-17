@@ -2,6 +2,7 @@ import { centerOrderContext } from './b2b-destination.mjs';
 import supplierData from './data/supplier-map.json' with { type: 'json' };
 import productData from './data/b2b-product-map.json' with { type: 'json' };
 import { lookupSupplierByProduct } from './supplier-lookup.mjs';
+import { itemRound } from './item-rounds.mjs';
 
 export const PARTS_ORDER_LABEL = '부품 주문(발주처 미정)';
 export const PARTS_ORDER_KIND = 'UNASSIGNED_PARTS';
@@ -18,13 +19,18 @@ export function classifyOrderRow(row, suppliers = supplierData, products = produ
       (vendor === 'bofeel' && (name.startsWith(alias + ' ') || name.startsWith(alias + '/'))))))))
     .map(([vendor]) => vendor);
   const mappedSupplier = mappedVendors.length === 1 ? ({ bofeel: '보필', eroum: '티에이치케이컴퍼니' })[mappedVendors[0]] : null;
-  const supplier = learned.status === 'matched' ? learned.supplier : learned.status === 'not_found' ? mappedSupplier : null;
+  const rounds = ['이로움', '안앤락'].filter(channel => itemRound(channel, name, row.option));
+  const roundSupplier = rounds.length === 1 ? ({ 이로움: '티에이치케이컴퍼니', 안앤락: '안앤락' })[rounds[0]] : null;
+  // 최신 사용자 승인 표가 이전 공급가격표와 다르면 승인 표를 우선하고 차이를 남긴다.
+  const supplier = roundSupplier || (learned.status === 'matched' ? learned.supplier : learned.status === 'not_found' ? mappedSupplier : null);
+  const learnedSupplierConflict = Boolean(roundSupplier && learned.status === 'matched' && learned.supplier !== roundSupplier);
   const conflict = supplier && mappedSupplier && supplier !== mappedSupplier;
   const partsOrder = !supplier || Boolean(conflict) || row.orderKind === PARTS_ORDER_KIND;
   return { ...centerOrderContext(row), partsOrder, orderKind: partsOrder ? PARTS_ORDER_KIND : 'STANDARD',
     supplier: partsOrder ? '' : supplier,
     supplierEvidence: partsOrder ? '상품 연결표·발주처 학습 자료에서 발주처 미확인 또는 모호함' :
-      learned.status === 'matched' ? (learned.basis === 'product' ? '발주처 학습 자료의 상품명·옵션 일치' : '발주처 학습 자료의 전체 모델명 일치') : '상품 연결표의 품명·모델 일치',
+      roundSupplier ? '2026-11-17 사용자 승인 품목 회차 표의 품명·모델·옵션 일치' : learned.status === 'matched' ? (learned.basis === 'product' ? '발주처 학습 자료의 상품명·옵션 일치' : '발주처 학습 자료의 전체 모델명 일치') : '상품 연결표의 품명·모델 일치',
+    ...(learnedSupplierConflict ? { supplierEvidenceConflict: `이전 학습 발주처 ${learned.supplier} → 사용자 승인 표 ${roundSupplier}` } : {}),
     ...(partsOrder ? { status: 'HOLD', reason: PARTS_ORDER_LABEL } : {}) };
 }
 

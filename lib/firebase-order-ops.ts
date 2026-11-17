@@ -77,9 +77,9 @@ export async function saveCenterUpload(prepared: CenterEntry[]) {
   const root = await transact(root => uploadCenterEntries(root, prepared, id, now));
   return root['center-queue'];
 }
-export async function makeCenterOnlyJob(supplier: string) {
+export async function makeCenterOnlyJob(supplier: string, scheduleKey?: string) {
   const now = new Date().toISOString(), id = newOrderJobId();
-  await transact(root => createCenterOnlyJob(root, id, supplier, now));
+  await transact(root => createCenterOnlyJob(root, id, supplier, now, scheduleKey));
   return id;
 }
 export async function excludeCenterRow(id: string, centerId: string) {

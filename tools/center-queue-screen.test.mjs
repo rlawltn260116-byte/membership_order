@@ -28,7 +28,7 @@ async function screen() {
     Button: ({ children, ...props }) => React.createElement('button', props, children), WorkbookSheetPicker: () => null,
     listCenterQueue: async () => structuredClone(root['center-queue'] || {}),
     saveCenterUpload: async entries => { saved++; root = core.uploadCenterEntries(structuredClone(root), entries, 'parts', '2026-11-17T00:00:00Z'); },
-    makeCenterOnlyJob: async supplier => { root = core.createCenterOnlyJob(structuredClone(root), 'only', supplier, '2026-11-17T00:00:00Z'); return 'only'; },
+    makeCenterOnlyJob: async (supplier, scheduleKey) => { root = core.createCenterOnlyJob(structuredClone(root), 'only', supplier, '2026-11-17T00:00:00Z', scheduleKey); return 'only'; },
     excludeHeldCenter: async id => { root = core.excludeHeldCenterEntry(structuredClone(root), id, '2026-11-17T00:00:00Z'); },
     fetch: () => assert.fail('실제 요청 금지'),
   });
@@ -42,13 +42,29 @@ async function screen() {
   const elements = tree => Array.isArray(tree) ? tree.flatMap(elements) : !tree || typeof tree !== 'object' ? [] : [tree, ...elements(tree.props?.children)];
   return { context, render, elements, opened, get saved() { return saved; }, get root() { return root; } };
 }
-async function file(filename, sheets = ['발주'], phone = '01000000000') {
+async function file(filename, sheets = ['발주'], phone = '01000000000', products = ['BFSH10']) {
   const book = new ExcelJS.Workbook();
   for (const name of sheets) book.addWorksheet(name).addRows([
     ['주문번호', '납품처', '납품처전화번호', '품명', '주문수량', '비고(내역)'],
-    ['', '가상시 모의로 1 /', phone, 'BFSH10', 1, '모의센터']]);
+    ...products.map(product => ['', '가상시 모의로 1 /', phone, product, 1, '모의센터'])]);
   return new File([await book.xlsx.writeBuffer()], filename);
 }
+
+test('실제 화면은 같은 업체를 회차별로 표시하고 선택한 묶음의 단독 작업만 만든다', async () => {
+  const app = await screen(); app.render();
+  await app.context.actions.loadFiles([await file('20261116_가상센터.xlsx', ['발주'], '01000000000', ['SPORTY', 'DYJ-03', '욕창예방방석 CD-07'])]);
+  app.render(); await app.context.actions.save(); const tree = app.render();
+  const html = renderToStaticMarkup(tree);
+  assert.match(html, /10:30 접수마감/); assert.match(html, /14:30 접수마감/); assert.match(html, /회차 확인 필요\(표에 없음\)/);
+  assert.match(html, /회차 미확정 항목 제외/);
+  const articles = app.elements(tree).filter(element => element.type === 'article');
+  const afternoon = articles.find(element => renderToStaticMarkup(element).includes('14:30 접수마감'));
+  const button = app.elements(afternoon).find(element => element.type === app.context.Button && element.props.children === '센터 상품만 따로 주문 만들기');
+  await button.props.onClick(); app.render();
+  assert.equal(app.root.jobs.only.scheduleKey, '이로움|14:00');
+  assert.equal(app.root.jobs.only.rows.length, 1); assert.equal(app.root.jobs.only.rows[0].productName, 'DYJ-03');
+  assert.equal(Object.values(app.root['center-queue'].entries).filter(entry => entry.state === 'WAITING').length, 2);
+});
 
 test('실제 센터 화면은 여러 파일을 한 번에 읽고 각 파일의 사람 시트 선택 후에만 저장한다', async () => {
   const app = await screen(); app.render();
