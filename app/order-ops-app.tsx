@@ -807,7 +807,7 @@ function VendorBoardSection({ jobs, noOrders, onSelect, onToggleNoOrder }: { job
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
               {board.filter((item) => (item.entry.orderDeadline ?? "마감 미정") === time).map((item) => (
                 <div key={item.key} className={`relative rounded-xl border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${item.status === "DONE" ? "border-emerald-200 bg-emerald-50/70" : item.status === "IN_PROGRESS" ? "border-amber-200 bg-amber-50/60" : item.status === BOARD_STATUS.NO_ORDER ? "border-sky-200 bg-sky-50/70" : item.overdue ? "border-rose-200 bg-rose-50/40" : "border-slate-200/80 bg-white"}`}>
-                <button type="button" aria-label={`${boardName(item.entry)} ${item.statusLabel}`} onClick={() => onSelect(item.key)} className="group w-full rounded-xl p-3 pr-12 text-left">
+                <button type="button" aria-label={`${boardName(item.entry)} ${item.statusLabel}`} onClick={() => onSelect(item.key)} className="group w-full rounded-xl p-3 pr-28 text-left">
                   <div className="flex items-start justify-between gap-2">
                     <span className="min-w-0"><span className="block truncate text-sm font-semibold">{boardName(item.entry)}</span>{item.entry.vendor !== item.entry.channel ? <span className="block text-[11px] text-slate-400">{item.entry.vendor}</span> : null}</span>
                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${boardStatusClass(item.status)}`}>{item.statusLabel}</span>
@@ -816,7 +816,7 @@ function VendorBoardSection({ jobs, noOrders, onSelect, onToggleNoOrder }: { job
                   {item.jobs.length ? <p className="mt-1 text-[11px] text-slate-500">오늘 발주서 {item.jobs.length}개{item.waitingReview ? " · 서버 처리·검토 중" : ""}</p> : null}
                   {item.overdue ? <p className="mt-1 text-[11px] font-semibold text-rose-600">발주마감 지남</p> : null}
                 </button>
-                {!item.jobs.length ? <button type="button" role="checkbox" aria-checked={item.status === BOARD_STATUS.NO_ORDER} aria-label={`${boardName(item.entry)} 발주없음 표시`} onClick={() => onToggleNoOrder(item)} className={`absolute bottom-3 right-3 flex h-7 w-7 items-center justify-center rounded-md border text-sm font-bold transition ${item.status === BOARD_STATUS.NO_ORDER ? "border-sky-600 bg-sky-600 text-white" : "border-slate-300 bg-white text-transparent hover:border-sky-500 hover:bg-sky-50"}`}>✓</button> : null}
+                {!item.jobs.length ? <span className="absolute bottom-3 right-3 flex items-center gap-2"><span className="text-xs font-medium text-slate-600">발주 없음</span><button type="button" role="checkbox" aria-checked={item.status === BOARD_STATUS.NO_ORDER} aria-label={`${boardName(item.entry)} 발주없음 표시`} onClick={() => onToggleNoOrder(item)} className={`flex h-7 w-7 items-center justify-center rounded-md border text-sm font-bold transition ${item.status === BOARD_STATUS.NO_ORDER ? "border-sky-600 bg-sky-600 text-white" : "border-slate-300 bg-white text-transparent hover:border-sky-500 hover:bg-sky-50"}`}>✓</button></span> : null}
                 </div>
               ))}
             </div>
