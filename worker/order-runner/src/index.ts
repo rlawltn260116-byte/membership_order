@@ -4,7 +4,7 @@ import { getDatabase } from "firebase-admin/database";
 import { chromium, type Browser, type Page } from "playwright";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { prepareHttpJob } from "../b2b-queue.mjs";
-import { sourceRowKey, ledgerReservation, usesHttp } from "../b2b-orders.mjs";
+import { sourceRowKey, ledgerReservation, usesHttp, bofeelOnlyJob } from "../b2b-orders.mjs";
 import { submissionContent } from "../order-approval.mjs";
 import { workbookProblem, type SourceWorkbook } from "../workbook-policy.mjs";
 import { isPartsOrder, PARTS_ORDER_LABEL } from "../order-classification.mjs";
@@ -734,15 +734,29 @@ async function prepareReport(job: OrderJob, browser: Browser | null): Promise<Wo
 }
 
 async function runOnce() {
-  // orderByKey needs no ".indexOn" rule; filter QUEUED jobs on the client side.
-  const recent = await database.ref(queuePath).orderByKey().limitToLast(100).get();
+  // GitHub 워크플로는 즉시실행기가 넘긴 작업 ID(ORDER_JOB_ID) 하나만 처리한다. 변수가 있으면(빈 값·공백 포함) 원문 그대로
+  // 형식을 검사하고, 그 작업이 보필 전용 작업(bofeelOnlyJob)이 아니면 선점하지 않는다.
+  // 변수 자체가 없을 때의 최근 100건 처리는 로컬 시험용이며 워크플로는 항상 이 변수를 넘긴다.
+  const targeted = process.env.ORDER_JOB_ID !== undefined;
+  const targetJobId = process.env.ORDER_JOB_ID ?? "";
+  if (targeted && !/^[-0-9A-Za-z_]{1,64}$/.test(targetJobId)) throw new Error("ORDER_JOB_ID 형식이 올바르지 않습니다.");
+  const isDue = (candidate: OrderJob | null) => Boolean(candidate && (!candidate.scheduledPreparation || process.env.ENABLE_ORDER_PREPARATION_SCHEDULING === "true") && (candidate.status === "SUBMIT_QUEUED" || (candidate.status === "QUEUED" && preparationDue(candidate, new Date(), process.env.ENABLE_ORDER_PREPARATION_SCHEDULING === "true"))));
   const queuedIds: string[] = [];
-  recent.forEach((child) => {
-    const candidate = child.val() as OrderJob | null;
-    if (candidate && (!candidate.scheduledPreparation || process.env.ENABLE_ORDER_PREPARATION_SCHEDULING === "true") && (candidate.status === "SUBMIT_QUEUED" || (candidate.status === "QUEUED" && preparationDue(candidate, new Date(), process.env.ENABLE_ORDER_PREPARATION_SCHEDULING === "true")))) queuedIds.push(child.key as string);
-    return false;
-  });
-  console.log(`::notice title=주문 워커::큐 조회 ${recent.numChildren()}건 중 실행 대기 ${queuedIds.length}건`);
+  if (targeted) {
+    // 요청 작업은 최근 건수 제한 없이 ID로 직접 읽는다.
+    const snapshot = await database.ref(`${queuePath}/${targetJobId}`).get();
+    const candidate = snapshot.val() as OrderJob | null;
+    if (candidate && bofeelOnlyJob(candidate) && isDue(candidate)) queuedIds.push(targetJobId);
+    console.log(`::notice title=주문 워커::요청 작업 ${targetJobId} ${queuedIds.length ? "처리 대상" : "처리 대상 아님(없음·보필 전용 아님·대기 상태 아님)"}`);
+  } else {
+    // orderByKey needs no ".indexOn" rule; filter QUEUED jobs on the client side.
+    const recent = await database.ref(queuePath).orderByKey().limitToLast(100).get();
+    recent.forEach((child) => {
+      if (isDue(child.val() as OrderJob | null)) queuedIds.push(child.key as string);
+      return false;
+    });
+    console.log(`::notice title=주문 워커::큐 조회 ${recent.numChildren()}건 중 실행 대기 ${queuedIds.length}건`);
+  }
   if (queuedIds.length === 0) {
     console.log("Queue empty");
     return;
@@ -754,6 +768,7 @@ async function runOnce() {
   try {
     for (const jobId of queuedIds.slice(0, 10)) {
       const job = await claimJob(jobId, (candidate) =>
+        !(targeted && (jobId !== targetJobId || !bofeelOnlyJob(candidate))) &&
         !(candidate.status === "SUBMIT_QUEUED" && submittedJobAttempted) && !(usesHttp(candidate) && httpJobAttempted));
       if (!job) {
         console.log(`::notice title=주문 워커::작업 ${jobId}은 이번 실행 한도 또는 상태 변경으로 선점하지 않았습니다.`);

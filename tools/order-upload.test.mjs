@@ -17,6 +17,7 @@ import ExcelJS from 'exceljs';
 import * as policy from '../worker/order-runner/workbook-policy.mjs';
 import * as schedule from '../worker/order-runner/schedule.mjs';
 import * as vendorBoardModule from '../worker/order-runner/vendor-board.mjs';
+import * as jobStageModule from '../worker/order-runner/job-stage.mjs';
 import * as centerQueueModule from '../worker/order-runner/center-queue.mjs';
 import supplierData from '../worker/order-runner/data/supplier-map.json' with { type: 'json' };
 import { splitDestination, analyzeDestination, centerOrderContext, DESTINATION_HOLD_REASON } from '../worker/order-runner/b2b-destination.mjs';
@@ -24,6 +25,7 @@ import { submissionContent } from '../worker/order-runner/order-approval.mjs';
 import * as classification from '../worker/order-runner/order-classification.mjs';
 import { prepareHttpJob, runQueueVendor } from '../worker/order-runner/b2b-queue.mjs';
 import { workerHarness } from './helpers/order-worker-harness.mjs';
+import { dispatcherHarness } from './helpers/order-dispatcher-harness.mjs';
 
 async function screen({ centerQueue } = {}) {
   const source = await readFile('app/order-ops-app.tsx', 'utf8');
@@ -35,7 +37,7 @@ async function screen({ centerQueue } = {}) {
     if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
     return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }];
   };
-  const context = { React, ExcelJS, console, window: { crypto: webcrypto }, TextEncoder, process: { env: {} }, ...policy, ...schedule, ...vendorBoardModule, ...classification, splitDestination, analyzeDestination, centerOrderContext, DESTINATION_HOLD_REASON, submissionContent,
+  const context = { React, ExcelJS, console, window: { crypto: webcrypto }, TextEncoder, process: { env: {} }, ...policy, ...schedule, ...vendorBoardModule, ...jobStageModule, ...classification, splitDestination, analyzeDestination, centerOrderContext, DESTINATION_HOLD_REASON, submissionContent,
     useState: state, useRef: initial => state(() => ({ current: initial }))[0], useMemo: fn => fn(), useEffect: () => {},
     createOrderJob: async value => { const job = { ...value, id: saved.length ? `saved-${saved.length + 1}` : 'saved' }; saved.push(job); return job; },
     listOrderJobs: async () => saved,
@@ -328,6 +330,14 @@ test('보필 1주문은 실제 화면 준비→검토 수락→내용 승인→�
   await app.context.screenActions.openJob(id); app.render();
   await app.context.screenActions.queueExecution();
   assert.equal(app.saved[0].status, 'QUEUED');
+  // 예약 실행은 없다. 즉시실행기가 운영 페이지의 요청을 보고 이 작업 ID 하나로만 워커 실행을 요청한다.
+  const dispatcher = await dispatcherHarness({ jobs: () => Object.fromEntries(app.saved.map(job => [job.id, job])) });
+  const dispatchWorker = jobId => {
+    dispatcher.tick();
+    assert.deepEqual(dispatcher.dispatches.at(-1), { ref: 'main', inputs: { job_id: jobId } });
+    env.ORDER_JOB_ID = dispatcher.dispatches.at(-1).inputs.job_id;
+  };
+  dispatchWorker(id);
   await worker.run(); app.saved[0] = worker.jobs[id];
   assert.equal(worker.jobs[id].status, 'AWAITING_REVIEW', JSON.stringify(worker.jobs[id].report));
   assert.equal(posts, 0); assert.equal(lookups, 1); assert.deepEqual(worker.ledger, []);
@@ -349,6 +359,7 @@ test('보필 1주문은 실제 화면 준비→검토 수락→내용 승인→�
   assert.equal(app.saved[0].status, 'SUBMIT_QUEUED');
   assert.equal(app.saved[0].dashboardReview.reviewedFromStatus, 'REVIEWED');
   assert.match(app.saved[0].dashboardReview.contentApprovalProof, /^[a-f0-9]{64}$/);
+  dispatchWorker(id);
   await worker.run(); app.saved[0] = worker.jobs[id];
   assert.equal(app.saved[0].status, 'COMPLETED');
   assert.equal(app.saved[0].submission.rows[2].state, 'SUBMITTED');
@@ -363,6 +374,7 @@ test('보필 1주문은 실제 화면 준비→검토 수락→내용 승인→�
   app.saved.push(duplicate); worker.jobs.duplicate = duplicate;
   await app.context.screenActions.openJob('duplicate'); app.render();
   await app.context.screenActions.queueFinalSubmission(key);
+  dispatchWorker('duplicate');
   await worker.run();
   assert.equal(worker.jobs.duplicate.status, 'HOLD');
   assert.match(worker.jobs.duplicate.report.details[0].reason, /원장/);
@@ -374,6 +386,7 @@ test('보필 1주문은 실제 화면 준비→검토 수락→내용 승인→�
   app.saved.push(locked); worker.jobs.locked = locked;
   await app.context.screenActions.openJob('locked'); app.render();
   await app.context.screenActions.queueFinalSubmission(key);
+  dispatchWorker('locked');
   await worker.run();
   assert.equal(worker.jobs.locked.status, 'HOLD');
   assert.match(worker.jobs.locked.report.details[0].reason, /잠금/);
@@ -529,4 +542,22 @@ test('업체 카드와 파일명의 업체가 다르면 미리보기·저장을 
   assert.equal(bofeel.button(tree, '서버 준비 요청').props.disabled, false);
   await bofeel.context.screenActions.markVendorOrderDone(bofeel.saved[0]);
   assert.equal(bofeel.writes.length, 0);
+});
+
+test('통합 현황은 오늘 작업을 다섯 단계 열로 보여 주고 보류·실패와 느린 서버 준비를 표시한다', async () => {
+  const app = await screen();
+  const now = Date.now();
+  const at = minutes => new Date(now - minutes * 60000).toISOString();
+  const mk = (id, status, extra = {}) => ({ id, filename: `${id}.xlsx`, sourceSystem: '보필', status, totalRows: 2, holdRows: 0, failedRows: 0, createdAt: at(5), updatedAt: at(1), ...extra });
+  const jobs = [mk('wait', 'READY'), mk('prep', 'RUNNING', { updatedAt: at(45) }), mk('rev', 'AWAITING_REVIEW'), mk('bad', 'HOLD', { holdRows: 1 }), mk('conf', 'REVIEWED'), mk('fin', 'COMPLETED')];
+  const html = renderToStaticMarkup(React.createElement(app.context.OverviewPage, { jobs, noOrders: [], onOpenJob() {}, onOpenInventory() {}, onSelectVendor() {}, onOpenRuns() {} }));
+  for (const label of ['발주서 대기', '서버 준비', '사람 검토', '주문 확정', '완료']) assert.ok(html.includes(`aria-label="${label} 열"`), label);
+  for (const label of ['전체', 'B2B몰', 'ERP', '메일', '카톡', '팩스']) assert.ok(html.includes(`>${label}</button>`), label);
+  assert.ok(html.includes('aria-label="보류·실패 작업"'));
+  assert.ok(html.includes('45분 경과'));
+  assert.ok(html.includes('실행 기록 보기'));
+  assert.ok(html.includes('마감 09:00'));
+  assert.ok(html.includes('aria-label="bad.xlsx 상세 열기"'));
+  assert.ok(html.indexOf('aria-label="보류·실패 작업"') < html.indexOf('aria-label="rev.xlsx 상세 열기"'));
+  assert.ok(html.includes('aria-label="업체별 발주 현황"'));
 });

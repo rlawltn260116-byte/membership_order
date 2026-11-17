@@ -18,7 +18,7 @@ GitHub Pages stores jobs in Firebase Realtime Database. A Cloud Run Job polls `o
 
 ## GitHub Actions worker
 
-The repository workflow `.github/workflows/order-worker.yml` runs every five minutes and can also be started manually. It checks Firebase for dashboard jobs in `QUEUED` status and returns a report to the same job. The user's PC and browser are not involved.
+`.github/workflows/order-worker.yml`에는 예약(cron) 실행이 없다(사용자 지시 2026-11-17). 운영 페이지에서 보필 작업의 `서버 준비 요청`(`QUEUED`)이나 검토 수락→주문 확정(`SUBMIT_QUEUED`)이 생기면 Apps Script 즉시실행기(`scripts/order_dispatcher.gs`)가 1분 안에 그 작업 ID를 `job_id` 입력으로 넣어 `workflow_dispatch`를 호출한다. 워커는 `ORDER_JOB_ID`로 받은 보필 전용 작업(작업·모든 행이 보필, 부품 아님) 하나만 직접 읽어 선점하고 다른 업체·혼합·다른 작업은 건드리지 않는다. 변수가 있으면 빈 값·공백도 형식 오류로 거부한다. 실행은 `membership-order-worker` concurrency 그룹으로 한 번에 하나만 돈다. GitHub 토큰은 Apps Script 스크립트 속성에만 두며 정적 운영 페이지(브라우저)에는 두지 않는다. `ORDER_JOB_ID` 변수 자체가 없으면(로컬 시험) 기존처럼 최근 100건의 대기 작업을 처리한다. 사용자의 PC와 브라우저는 관여하지 않는다.
 
 The Playwright dependency is pinned to the same version as the GitHub Actions browser container so the headless Chromium executable is always available.
 
@@ -42,7 +42,7 @@ Configure these GitHub Actions secrets before enabling the worker:
 | `ENABLE_B2B_HTTP_SUBMIT` | `true`: 승인 후 보필 제출 허용 | `false` 또는 삭제: 제출 HOLD |
 | `B2B_HTTP_SUBMIT_VENDORS` | `bofeel` | 빈 값 또는 삭제: 모든 HTTP 제출 HOLD |
 
-변수는 `process-queue`의 큐 처리 단계에 `vars.*`로 주입한다. 기본 꺼짐이며 즉시실행기 호출에도 적용한다. 수동 `b2b_http_cart` 입력은 기존 고정 상품 시험 job에만 적용한다. 목록은 쉼표와 앞뒤 공백을 지원하나 운영 전송기에서 정확한 `bofeel`만 허용한다. 다른 업체는 목록에 있어도 HTTP 제출하지 않는다. 기존 Firebase·이로움 세션·최종 승인 코드 secret과 `BOFEEL_LOGIN_ID`·`BOFEEL_LOGIN_PASSWORD`·32자 이상 고정 `B2B_SUBMISSION_LEDGER_KEY`가 필요하다. Python 설치 실패 시 보필을 HOLD하며 이로움 Playwright 처리는 계속한다.
+변수는 `process-queue`의 큐 처리 단계에 `vars.*`로 주입한다. 기본 꺼짐이며 즉시실행기 호출에 적용한다. 수동 `b2b_http_cart` 입력은 기존 고정 상품 시험 job에만 적용한다. 목록은 쉼표와 앞뒤 공백을 지원하나 운영 전송기에서 정확한 `bofeel`만 허용한다. 다른 업체는 목록에 있어도 HTTP 제출하지 않는다. 기존 Firebase·최종 승인 코드 secret과 `BOFEEL_LOGIN_ID`·`BOFEEL_LOGIN_PASSWORD`·32자 이상 고정 `B2B_SUBMISSION_LEDGER_KEY`가 필요하다. Python 설치 실패 시 보필을 HOLD하며 이로움 Playwright 처리는 계속한다.
 
 운영 화면에서 서버 준비 요청→배송지 묶음·상품/옵션·우편번호 판정 검토→검토 수락→승인 코드를 넣어 주문 확정→보필 주문번호 확인 순서로 진행한다. PREPARE는 우편번호 없는 보필 주소를 조회하고 기존의 정확한 후보 한 개 규칙으로 확정한다. 조회 근거를 작업 행에 저장해 내용 승인에 묶으며 제출 때는 주소를 보완하거나 바꾸지 않는다. 시트 선택·신규 주소·비고 전용 메모·금액/결제/동의 검증을 유지한다.
 
@@ -52,7 +52,7 @@ Configure these GitHub Actions secrets before enabling the worker:
 
 ## Build
 
-Use Node.js 22 locally. The scheduled GitHub Actions runner uses the Playwright container image so Chromium is available. The Firebase service account JSON is read from the process environment and is never written into the repository.
+Use Node.js 22 locally. The GitHub Actions runner uses the Playwright container image so Chromium is available. The Firebase service account JSON is read from the process environment and is never written into the repository.
 
 ```sh
 npm install
@@ -96,7 +96,7 @@ npm run build
 - GitHub Actions secret 이름: `EROUM_LOGIN_ID`, `EROUM_LOGIN_PASSWORD`, `BOFEEL_LOGIN_ID`, `BOFEEL_LOGIN_PASSWORD`. 값은 저장소에 두지 않는다. 연결부는 해당 업체의 두 값만 자식 프로세스에 넘기고 Firebase·승인 키·GitHub 토큰은 넘기지 않는다.
 - 의존성: Python 3.12와 `pip install -r requirements-http.txt`(`cryptography`).
 - 실행: `node b2b-http-cart.mjs eroum` 또는 `bofeel`. 업체당 로그인 1회, 실패·시간 초과 시 재시도하지 않고 `cartCheckRequired`로 보고한다.
-- workflow: `order-worker.yml`의 `b2b-http-cart` job은 수동 실행(`workflow_dispatch`)이면서 저장소 변수 `ENABLE_B2B_HTTP_CART`가 `true`일 때만 돈다. 예약 실행에서는 돌지 않는다. 이 job은 아직 실행하지 않았다.
+- workflow: `order-worker.yml`의 `b2b-http-cart` job은 수동 실행(`workflow_dispatch`)이면서 저장소 변수 `ENABLE_B2B_HTTP_CART`가 `true`일 때만 돈다. 즉시실행기 호출에서는 돌지 않으며 예약 실행은 없다. 이 job은 아직 실행하지 않았다.
 - 시험: `node --test b2b-http-cart.test.mjs`, `python -m unittest discover -p "test_http*.py"`(`cryptography` 필요).
 
 ## 취합 행 기반 HTTP 큐 경로 (2026-11-11)

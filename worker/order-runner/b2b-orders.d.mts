@@ -1,4 +1,5 @@
 export function sourceRowKey(vendor: string, row: unknown, job?: unknown): string;
+export function bofeelOnlyJob(job: { sourceSystem?: string; orderKind?: string; rows?: { sourceSystem?: string; orderKind?: string }[] } | null | undefined): boolean;
 export function usesHttp(job: { sourceSystem?: string; rows?: { sourceSystem?: string }[] }): boolean;
 export function httpSubmitAllowed(vendor: string, env?: NodeJS.ProcessEnv): boolean;
 export function splitDestination(value: string, vendor?: string): { name: string; address: string } | null;

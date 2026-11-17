@@ -1,17 +1,23 @@
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "../vendor/shadcn-tailwind-4.13.0.css";
 
-.ops-sidebar { width: 224px; position: fixed; inset: 0 auto 0 0; overflow-y: auto; padding: 24px 14px; background: #fff; border-right: 1px solid #e8edea; }
+.ops-sidebar { width: 224px; position: fixed; inset: 0 auto 0 0; overflow-y: auto; padding: 24px 14px; background: #fff; border-right: 1px solid #e5e7eb; }
 .ops-content { margin-left: 224px; }
-.ops-shell { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
-.ops-shell table tr { border-color: #e8edea; }
-.ops-shell table th { font-size: 11px; color: #64748b; background: #f8faf9; font-weight: 500; }
+@media (min-width: 1024px) {
+  .ops-shell { position: relative; }
+  .ops-shell::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 224px; background: #fff; border-right: 1px solid #e5e7eb; }
+  .ops-sidebar { z-index: 1; }
+}
+.ops-shell { font-family: "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+.ops-shell table tr { border-color: #e5e7eb; }
+.ops-shell table th { font-size: 11px; color: #475569; background: #f8fafc; font-weight: 700; }
 .ops-shell table td { padding-top: 16px; padding-bottom: 16px; }
 .ops-shell button { cursor: pointer; }
 .ops-shell button:disabled { cursor: not-allowed; }
 @media (max-width: 1023px) {
-  .ops-sidebar { position: static; width: auto; max-height: none; padding: 16px; border-right: none; border-bottom: 1px solid #e8edea; }
+  .ops-sidebar { position: static; width: auto; max-height: none; padding: 16px; border-right: none; border-bottom: 1px solid #e5e7eb; }
   .ops-sidebar nav { display: flex; overflow-x: auto; gap: 4px; }
   .ops-sidebar nav button { width: auto; flex-shrink: 0; white-space: nowrap; }
   .ops-sidebar > aside, .ops-sidebar > div:last-child { display: none; }
@@ -35,30 +41,30 @@
 }
 
 :root {
-  --background: #f6f7f4;
+  --background: #f2f4f6;
   --foreground: #0f172a;
   --card: #ffffff;
   --card-foreground: #171717;
   --popover: #ffffff;
   --popover-foreground: #171717;
-  --primary: #0f766e;
+  --primary: #2563eb;
   --primary-foreground: #ffffff;
-  --secondary: #e8eee9;
-  --secondary-foreground: #18342f;
-  --muted: #edf0eb;
-  --muted-foreground: #647067;
-  --accent: #e0f2f1;
-  --accent-foreground: #0f4f49;
+  --secondary: #e8eef9;
+  --secondary-foreground: #1e3a8a;
+  --muted: #eceff3;
+  --muted-foreground: #556070;
+  --accent: #e0ebff;
+  --accent-foreground: #1e40af;
   --destructive: #e7000b;
   --border: #e5e5e5;
   --input: #e5e5e5;
-  --ring: #0f766e;
-  --chart-1: #0f766e;
+  --ring: #2563eb;
+  --chart-1: #2563eb;
   --chart-2: #2563eb;
   --chart-3: #d97706;
   --chart-4: #be123c;
   --chart-5: #475569;
-  --radius: 0.5rem;
+  --radius: 0.75rem;
   --sidebar: #fafafa;
   --sidebar-foreground: #171717;
   --sidebar-primary: #171717;
@@ -105,7 +111,7 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-sans: Arial, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  --font-sans: "Noto Sans KR", Arial, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
 }
@@ -149,7 +155,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  font-family: "Noto Sans KR", Arial, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
 }
 
 button,

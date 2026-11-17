@@ -1,0 +1,12 @@
+export type JobStageId = "WAITING" | "PREPARING" | "REVIEW" | "CONFIRM" | "DONE";
+type StageJob = { id?: string; orderKind?: string; scheduleKey?: string | null; sourceSystem?: string; createdAt?: string; updatedAt?: string; status?: string; vendorOrderDone?: { doneAt: string } | null };
+export const JOB_STAGES: { id: JobStageId; label: string; hint: string }[];
+export const CHANNEL_FILTERS: string[];
+export const SLOW_PREPARE_MINUTES: number;
+export function jobStage(job: StageJob | null | undefined): { stage: JobStageId; problem: boolean };
+export function jobChannelGroup(job: StageJob | null | undefined): string;
+export function jobDeadline(job: StageJob | null | undefined): string | null;
+export function preparingMinutes(job: StageJob, now?: Date): number | null;
+export function isSlowPreparing(job: StageJob, now?: Date): boolean;
+export function formatElapsed(minutes: number | null | undefined): string;
+export function groupJobsByStage<J extends StageJob>(jobs: J[], filter?: string, now?: Date): Record<JobStageId, J[]> & { problems: J[] };

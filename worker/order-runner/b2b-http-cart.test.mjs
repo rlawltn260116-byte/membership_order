@@ -128,9 +128,11 @@ test("고정 HTTP 장바구니 시험 job의 수동 입력 조건은 큐 처리�
   // 즉시실행기(Apps Script)는 입력 없이 workflow_dispatch를 호출하므로, 사람이 입력을 직접 켜야만 돈다.
   assert.match(httpJob, /^    if: github\.event_name == 'workflow_dispatch' && inputs\.b2b_http_cart == true && vars\.ENABLE_B2B_HTTP_CART == 'true'\n/);
   assert.equal(/^    needs:/m.test(httpJob.split("\n    steps:")[0]), false, "주문 처리 job에 묶이지 않아야 함");
-  assert.match(queueJob, /workflow_dispatch:\n    inputs:\n      b2b_http_cart:\n[\s\S]*?type: boolean\n        default: false\n/);
+  assert.match(queueJob, /workflow_dispatch:\n    inputs:\n[\s\S]*?\n      b2b_http_cart:\n[\s\S]*?type: boolean\n        default: false\n/);
   const dispatcher = readFileSync(new URL("../../scripts/order_dispatcher.gs", import.meta.url), "utf8");
-  assert.equal(/b2b_http_cart|inputs\s*:/.test(dispatcher), false, "즉시실행기가 HTTP 장바구니 입력을 보내면 안 됨");
+  // 즉시실행기는 작업 ID 입력 하나만 보낸다. HTTP 장바구니 시험 입력은 보내지 않는다.
+  assert.equal(/b2b_http_cart/.test(dispatcher), false, "즉시실행기가 HTTP 장바구니 입력을 보내면 안 됨");
+  assert.deepEqual(dispatcher.match(/inputs\s*:[^\n]*/g), ["inputs: { job_id: jobId } }),"]);
   assert.match(httpJob, /permissions:\n      contents: read\n/);
   assert.match(httpJob, /pip install --disable-pip-version-check -r requirements-http\.txt/);
   for (const name of ["FIREBASE", "FINAL_SUBMISSION_APPROVAL_KEY", "EROUM_STORAGE_STATE_JSON", "GITHUB_TOKEN", "npm start"]) {
@@ -163,7 +165,8 @@ test("큐 스위치와 업체 목록은 저장소 변수로만 주입하고 수�
     for (const assignment of assignments) assert.equal(assignment.trim(), name + ": ${{ vars." + name + " }}");
     assert.ok(step.text.includes(name + ": ${{ vars." + name + " }}"));
   }
-  assert.equal(step.text.includes("inputs."), false);
+  // 수동 입력은 즉시실행기가 넘기는 작업 ID 하나만 받는다. 스위치·업체 목록은 입력으로 바꿀 수 없다.
+  assert.deepEqual(step.text.match(/[^\n]*inputs\.[^\n]*/g).map(line => line.trim()), ["ORDER_JOB_ID: ${{ inputs.job_id }}"]);
 });
 
 test("process-queue의 큐 처리 단계에 HTTP 로그인 secret 4개와 원장 키가 전달된다", () => {

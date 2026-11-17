@@ -36,19 +36,20 @@ test("예약 전 선점하지 않고 접수마감 초과·변조·혼합 업체�
   assert.equal(reservationProblem({}), null);
 });
 test("즉시실행기도 미래 예약을 제외하고 최종 승인 작업은 즉시 실행한다", () => {
+  const bofeel = {sourceSystem: "보필", rows: [{sourceSystem: "보필"}]};
   const jobs = {
-    future: {status: "QUEUED", scheduledPreparation: {runAt: "2099-01-01T00:00:00Z"}},
-    due: {status: "QUEUED", scheduledPreparation: {runAt: "2020-01-01T00:00:00Z"}},
-    immediate: {status: "QUEUED"},
-    final: {status: "SUBMIT_QUEUED", scheduledPreparation: {runAt: "2099-01-01T00:00:00Z"}},
-    running: {status: "RUNNING"},
+    future: {...bofeel, status: "QUEUED", scheduledPreparation: {runAt: "2099-01-01T00:00:00Z"}},
+    due: {...bofeel, status: "QUEUED", scheduledPreparation: {runAt: "2020-01-01T00:00:00Z"}},
+    immediate: {...bofeel, status: "QUEUED"},
+    final: {...bofeel, status: "SUBMIT_QUEUED", scheduledPreparation: {runAt: "2099-01-01T00:00:00Z"}},
+    running: {...bofeel, status: "RUNNING"},
   };
   const context = vm.createContext({
     PropertiesService: {getScriptProperties: () => ({getProperty: (key) => key === "ENABLE_ORDER_PREPARATION_SCHEDULING" ? "true" : null})},
     UrlFetchApp: {fetch: () => ({getResponseCode: () => 200, getContentText: () => JSON.stringify(jobs)})},
   });
   vm.runInContext(readFileSync(new URL("../../scripts/order_dispatcher.gs", import.meta.url), "utf8"), context);
-  assert.deepEqual(Array.from(vm.runInContext("pendingJobs_()", context)), ["due", "immediate", "final"]);
+  assert.deepEqual(Array.from(vm.runInContext("pendingJobs_()", context)).sort(), ["due", "final", "immediate"]);
   context.PropertiesService.getScriptProperties = () => ({getProperty: () => null});
   assert.deepEqual(Array.from(vm.runInContext("pendingJobs_()", context)), ["immediate"]);
 });

@@ -11,7 +11,7 @@ import { listCenterQueue, saveCenterUpload, makeCenterOnlyJob, excludeHeldCenter
 type UploadFile = { id: string; filename: string; workbook: Workbook; source: SourceWorkbook; selectedSheet: string; sourceDate: string; rows: CenterRow[]; error: string };
 const stateLabel: Record<string, string> = { WAITING: '대기', RESERVED: '예약됨', COMPLETED: '발주 완료', UNASSIGNED: '보류 · 발주처 미정', EXCLUDED: '제외됨' };
 
-export default function CenterOrderQueue({ jobs, onOpenJob, onChanged }: { jobs: Array<{ id: string; createdAt: string; sourceSystem: string }>; onOpenJob: (id: string) => void; onChanged: () => Promise<void> }) {
+export default function CenterOrderQueue({ jobs, onOpenJob, onChanged, compact = false, onOpenQueue }: { jobs: Array<{ id: string; createdAt: string; sourceSystem: string }>; onOpenJob: (id: string) => void; onChanged: () => Promise<void>; compact?: boolean; onOpenQueue?: () => void }) {
   const [uploads, setUploads] = useState<UploadFile[]>([]);
   const [queue, setQueue] = useState<CenterRoot>({});
   const [busy, setBusy] = useState(false);
@@ -87,6 +87,19 @@ export default function CenterOrderQueue({ jobs, onOpenJob, onChanged }: { jobs:
   }
   const root = { jobs: Object.fromEntries(jobs.map(job => [job.id, job])), 'center-queue': queue };
   const groups = centerQueueGroups(root, now);
+  if (compact) {
+    // 칸반 보드용 요약: 업체 발주마감 30분 전 '센터 상품 미발주' 알림과 단독 작업 버튼만 보여 준다.
+    const waiting = groups.reduce((sum, group) => sum + group.entries.filter(entry => entry.state === 'WAITING').length, 0);
+    return <section aria-label="센터 발주 대기열" className="space-y-3">
+      {groups.filter(group => group.alert).map(group => <div key={group.key} role="alert" className="rounded-2xl bg-amber-50 p-3 ring-1 ring-amber-300">
+        <strong className="text-sm text-amber-900">센터 상품 미발주</strong>
+        <p className="my-1 text-xs text-amber-900">{group.supplier} · 오늘 {group.deadline.label} (한국시간). 해당 회차의 제조사 발주서가 없고 대기 중인 센터 상품이 있습니다.</p>
+        <Button size="sm" disabled={busy || !group.entries.some(entry => entry.state === 'WAITING' && entry.row.status === 'READY')} onClick={() => void makeJob(group.supplier, group.scheduleKey)}>센터 상품만 따로 주문 만들기</Button>
+      </div>)}
+      {message ? <p role="status" className="text-xs text-slate-700">{message}</p> : null}
+      <button type="button" onClick={onOpenQueue} disabled={!onOpenQueue} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-bold text-slate-800 hover:border-blue-300 disabled:cursor-default">센터 발주 대기열 열기<span className="block text-xs font-normal text-slate-600">대기 중인 센터 상품 {waiting}건 · 업로드·회차 확인</span></button>
+    </section>;
+  }
   return <section aria-label="센터 발주 대기열" className="space-y-5">
     <div className="rounded-2xl border bg-white p-5">
       <h2 className="text-lg font-semibold">센터 발주 대기열</h2>

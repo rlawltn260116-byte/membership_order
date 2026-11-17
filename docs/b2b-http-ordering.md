@@ -1,5 +1,36 @@
 # 이로움·보필 HTTP 장바구니 분석과 운영 설계
 
+## 주문 워커 실행 계기: 예약 제거와 보필 요청 즉시 실행 (2026-11-17)
+
+사용자 지시(11-17): 주문 워커는 시간마다 돌지 않고, 운영 페이지에 보필 발주서를 올려 `서버 준비 요청`을 누르면 그때 돈다. 이 절이 아래 기록의 "즉시실행기와 예약 실행" 표현보다 우선한다.
+
+- `order-worker.yml`의 `schedule` 트리거를 지웠다. 계기는 `workflow_dispatch` 하나뿐이며 새 문자열 입력 `job_id`를 받는다. `process-queue` job은 `job_id`가 있을 때만 돌고, 작업 ID는 `ORDER_JOB_ID` 환경변수로만 넘긴다(셸 명령에 끼워 넣지 않음). 고정 장바구니 시험 job(`b2b_http_cart`)의 수동 입력 조건은 그대로다.
+- 운영 페이지는 정적 GitHub Pages라서 브라우저에 GitHub 토큰을 둘 수 없다. 저장소에 이미 있던 Apps Script 즉시실행기(`scripts/order_dispatcher.gs`)를 실행 경로로 쓴다. 1분마다 Firebase 대기열을 읽어, 보필 전용 작업이 `QUEUED`(서버 준비 요청) 또는 `SUBMIT_QUEUED`(검토 수락→주문 확정)이면 그 작업 ID 하나를 `job_id`로 넣어 실행을 요청한다. 보필 전용은 작업 업체(비어 있으면 행이 상속)와 모든 행의 업체가 보필이고 부품 작업이 아닌 것이다(워커 `bofeelOnlyJob`과 같은 기준). 작업 업체가 보필이어도 이로움 행이 섞이면 요청하지 않는다. 토큰은 Apps Script 스크립트 속성에만 있다. 이로움 등 다른 업체 작업은 요청하지 않는다.
+- 대기 작업은 Firebase 규칙의 `order-ops/jobs` `".indexOn": ["status"]`로 상태별 조회(`orderBy="status"&equalTo=...`)를 해서 건수 제한 없이 찾고 가장 먼저 등록된 것부터 요청한다. 인덱스가 없으면(HTTP 400 Index not defined) 최근 30건만 보며 오래된 대기 작업을 놓칠 수 있음을 하루 한 번 메일로 알린다. 인덱스 추가는 운영 설정 변경이라 아래 순서에 넣었다.
+- 즉시실행기는 실행 중·대기 중인 워커가 있으면 요청하지 않고, 한 번에 작업 하나만 요청한다. 같은 요청은 4분 안에 다시 요청하지 않으며 3번 요청해도 처리되지 않으면 더 요청하지 않고 소유자에게 하루 한 번 메일로 알린다. 요청은 상태·승인 요청번호·`dashboardReview.updatedAt`(운영 페이지가 준비 요청·주문 확정 때마다 새로 씀)으로 구분한다. 그래서 준비→제출로 넘어가거나, 감시 주기 사이에 보류했다가 다시 준비 요청해도 새 요청으로 보고 횟수를 새로 센다.
+- 워크플로 concurrency는 `membership-order-worker` 고정 그룹, `cancel-in-progress: false`다. 같은 작업은 물론 다른 작업끼리도 동시에 돌지 않는다(보필 로그인·제출 원장 공유). 대기 중 실행이 밀려 취소되면 작업이 `QUEUED`로 남아 다시 요청된다. 워커의 Firebase 트랜잭션 선점(`QUEUED`→`RUNNING`)이 겹침을 한 번 더 막는다.
+- 워커는 `ORDER_JOB_ID` 환경변수가 있으면(빈 값·공백 포함) 원문 그대로 형식(`[-0-9A-Za-z_]`, 1~64자)을 검사해 맞지 않으면 아무 작업도 바꾸지 않고 실패한다. 그 ID를 최근 건수 제한 없이 직접 읽어 보필 전용 작업이고 대기 상태일 때만 선점하며, 선점 트랜잭션 안에서 다시 확인한다. 다른 작업·이로움·혼합·부품 작업은 건드리지 않는다. 변수 자체가 없을 때의 최근 100건 처리는 로컬 시험용이며 워크플로는 항상 이 변수를 넘긴다(`inputs.job_id != ''`를 통과한 공백 값도 워커가 거부).
+- 보필만 처리하므로 secret 확인 단계에서 이로움 세션(`EROUM_STORAGE_STATE_JSON`)은 필수에서 뺐다. Firebase secret이 없으면 조용히 건너뛰지 않고 실패로 남긴다.
+- 제출 단계는 바꾸지 않았다. `SUBMIT_QUEUED`는 운영 페이지의 검토 수락→주문 확정에서만 생기며, 워커가 기존 승인 코드·내용 증명·원장·행 잠금과 저장소 변수(`ENABLE_B2B_HTTP_SUBMIT`, `B2B_HTTP_SUBMIT_VENDORS`)를 다시 확인한다. 승인 증명 없는 `SUBMIT_QUEUED`는 HOLD된다.
+- 이로움 작업의 서버 준비 요청은 이 경로로 실행되지 않는다. 이로움 자동 실행은 별도 지시가 필요하다.
+
+시험: `worker/order-runner/order-trigger.test.mjs`(워크플로 계기·concurrency, 브라우저 코드에 토큰·실행 요청 없음, 모의 Apps Script 즉시실행기의 보필 전용 한정·혼합·부품 제외·한 건씩·재요청 제한과 새 요청 세대·30건 밖 오래된 대기 작업 발견과 인덱스 없을 때 알림·실패 알림, 모의 Firebase 워커의 단일 작업 선점·비보필·혼합·부품 거부·빈 값·공백·잘못된 ID 거부·승인 없는 제출 HOLD). 모의 즉시실행기는 Firebase REST 조회 조건(`orderBy`·`equalTo`·`limitToLast`)을 실제 의미대로 적용한다.과 `tools/order-upload.test.mjs`의 보필 전체 흐름(실제 화면 준비 요청→즉시실행기→워커 준비→검토 수락→주문 확정→즉시실행기→모의 HTTP 제출→원장·잠금)이다. 실제 사이트·GitHub·Firebase 요청, 워크플로 실행, 운영 설정 변경은 하지 않았다.
+
+### 운영 적용 순서 (운영 승인 후 지휘자가 실행)
+
+순서가 중요하다. 예약이 남은 예전 워크플로를 먼저 켜면 예약 실행이 돈다. 반드시 이 코드가 `main`에 올라간 뒤에 켠다.
+
+1. 이 변경을 `main`에 푸시하고 `gh api repos/rlawltn260116-byte/membership_order/contents/.github/workflows/order-worker.yml?ref=main --jq .sha` 값이 로컬 `git rev-parse origin/main:.github/workflows/order-worker.yml`(푸시한 blob SHA)와 같은지, 그 파일에 `schedule`이 없는지 확인한다.
+2. 필요한 secret이 있는지 이름만 확인한다: `gh secret list --repo rlawltn260116-byte/membership_order` (`FIREBASE_DATABASE_URL`, `FIREBASE_SERVICE_ACCOUNT_JSON`, `BOFEEL_LOGIN_ID`, `BOFEEL_LOGIN_PASSWORD`, `B2B_SUBMISSION_LEDGER_KEY`, `FINAL_SUBMISSION_APPROVAL_KEY`).
+3. 보필 준비 스위치: `gh variable list --repo rlawltn260116-byte/membership_order`로 확인하고, 준비를 허용할 때만 `gh variable set ENABLE_B2B_HTTP_CART --body true --repo rlawltn260116-byte/membership_order`. 실제 발주 금지가 풀리기 전에는 `ENABLE_B2B_HTTP_SUBMIT`·`B2B_HTTP_SUBMIT_VENDORS`를 켜지 않는다.
+4. Apps Script 즉시실행기: script.google.com의 "주문워커 즉시실행기" 프로젝트(없으면 새로 만듦)에 새 `scripts/order_dispatcher.gs` 전체를 붙여 넣고 저장한다. 스크립트 속성 `GITHUB_TOKEN`은 이 저장소 하나에 Actions 읽기·쓰기만 준 fine-grained 토큰이다(필요하면 `FIREBASE_AUTH`). 함수 `checkSetup`을 실행해 "토큰 확인 OK"와 "대기열 읽기 OK"를 확인한다. 이때 워크플로 상태는 아직 꺼짐으로 보인다. `setup`은 아직 실행하지 않는다.
+5. Firebase 규칙: 콘솔의 Realtime Database 규칙에서 `order-ops` 아래 `jobs`에 `".indexOn": ["status"]`를 추가한다(기존 읽기·쓰기 규칙은 그대로 둔다). 추가 전에는 즉시실행기가 최근 30건만 보고 하루 한 번 알린다.
+6. 워크플로 켜기: `gh workflow enable order-worker.yml --repo rlawltn260116-byte/membership_order` 후 `gh api repos/rlawltn260116-byte/membership_order/actions/workflows/order-worker.yml --jq .state`가 `active`인지 확인한다. 예약이 없으므로 켜기만으로는 실행되지 않는다.
+7. Apps Script에서 `setup`을 실행해 1분 트리거를 만든다.
+8. 운영 페이지에서 보류해 둔 보필 작업을 열고 `서버 준비 요청`을 누른다. 1~2분 안에 `gh run list --workflow order-worker.yml --repo rlawltn260116-byte/membership_order --limit 3`에 `workflow_dispatch` 실행이 보이고 작업이 `AWAITING_REVIEW` 또는 사유가 있는 `HOLD`로 바뀌어야 한다. Apps Script `status`로 요청 기록을 볼 수 있다.
+
+멈추기: Apps Script `stop`(트리거 삭제), 필요하면 `gh workflow disable order-worker.yml --repo rlawltn260116-byte/membership_order`.
+
 ## 센터·지사 발주와 발주처 미정 부품 (2026-11-16)
 
 파일명 또는 `비고(내역)`에 `센터`나 `지사`가 있으면 센터 발주다. 납품처 안에 기관명이 있다는 것만으로 센터 발주로 바꾸지 않는다. 판정 결과에 `centerOrder`와 `centerOrderEvidence`를 저장하고 운영 화면에 **센터 발주(수취인 생략)**과 파일명·비고 중 판정 근거를 표시한다. `주소 /`의 빈 수취인은 허용하고, 원본 꼬리의 지사·센터명은 그대로 보존한다. 기존 규칙으로 수취인 경계를 확정할 수 없는 구분자 없는 센터 납품처는 원문 전체를 주소로 보존하며 수취인을 지어내지 않는다. 주소 누락·주소 조각 등 다른 검증과 일반 고객의 `수취인 없음` 보류는 유지한다.
@@ -60,7 +91,7 @@
 
 이 절이 아래 과거의 운영 큐 스위치 미연결·이로움 HTTP 선택·우편번호 검색 미연결 기록보다 우선한다. 코드와 합성 HTTP 시험만 반영했다. 실제 사이트 요청·주문·저장소 변수나 secret 변경·workflow 실행·Firebase 운영 변경·커밋·푸시는 수행하지 않았다.
 
-`process-queue`의 큐 처리 단계는 다음 저장소 변수 세 개를 `vars.*`에서 그대로 받는다. 수동 `b2b_http_cart` 입력 없이 호출하는 즉시실행기와 예약 실행에도 같은 설정을 전달한다. 별도 고정 상품 시험 job의 수동 입력 조건은 유지한다.
+`process-queue`의 큐 처리 단계는 다음 저장소 변수 세 개를 `vars.*`에서 그대로 받는다. 수동 `b2b_http_cart` 입력 없이 작업 ID만 넣어 호출하는 즉시실행기 실행에 같은 설정을 전달한다(예약 실행은 11-17에 없앴다). 별도 고정 상품 시험 job의 수동 입력 조건은 유지한다.
 
 | 저장소 변수 | 보필 운영 연결을 켜는 값 | 끄는 방법 |
 | --- | --- | --- |

@@ -1,5 +1,5 @@
 import { analyzeDestination, centerOrderContext, RECIPIENT_MAX_LENGTH } from "./b2b-destination.mjs";
-import { classifyOrderRow, PARTS_ORDER_LABEL } from "./order-classification.mjs";
+import { classifyOrderRow, isPartsOrder, PARTS_ORDER_LABEL } from "./order-classification.mjs";
 export { splitDestination } from "./b2b-destination.mjs";
 // 상품 연결·배송지별 준비 계획. 외부 요청과 고객정보 저장을 하지 않는다.
 import { readFileSync } from "node:fs";
@@ -23,6 +23,16 @@ export function httpSubmitAllowed(vendor, env = process.env) {
 export function usesHttp(job) {
   return vendorFor(job.sourceSystem) === "bofeel" ||
     Boolean(job.rows?.length && job.rows.every(row => vendorFor(row.sourceSystem) === "bofeel"));
+}
+
+// 즉시실행기 요청 작업의 실행 경계: 작업 업체(비어 있으면 행이 상속)와 모든 행의 업체가 보필이고 부품 작업이 아니어야 한다.
+// usesHttp는 작업 업체만 보필이어도 true라서 혼합 행을 막지 못하므로 요청 작업 선점에는 이 검사를 쓴다.
+export function bofeelOnlyJob(job) {
+  if (!job || isPartsOrder(job)) return false;
+  const jobVendor = norm(job.sourceSystem) ? vendorFor(job.sourceSystem) : "bofeel";
+  const rows = Array.isArray(job.rows) ? job.rows : [];
+  return jobVendor === "bofeel" && rows.length > 0 &&
+    rows.every(row => row && vendorFor(norm(row.sourceSystem) ? row.sourceSystem : job.sourceSystem) === "bofeel");
 }
 
 export function mapProduct(vendor, row) {

@@ -1,29 +1,37 @@
 name: Membership order background worker
 
 on:
+  # 예약(schedule) 실행은 없다(사용자 지시 2026-11-17). 운영 페이지에서 보필 작업의 서버 준비 요청(QUEUED)이나
+  # 검토 수락→주문 확정(SUBMIT_QUEUED)이 생기면 주문워커 즉시실행기(scripts/order_dispatcher.gs, Apps Script)가
+  # 1분 안에 그 작업 ID를 job_id 입력으로 넣어 workflow_dispatch를 호출한다. GitHub 토큰은 Apps Script
+  # 스크립트 속성에만 두며 정적 운영 페이지(브라우저)에는 두지 않는다.
   workflow_dispatch:
     inputs:
+      job_id:
+        description: '처리할 보필 주문 작업 ID(즉시실행기가 넣는다). 비우면 큐 처리를 하지 않는다.'
+        type: string
+        required: false
+        default: ''
       b2b_http_cart:
         description: '이로움·보필 HTTP 장바구니 준비 시험을 실행한다(주문 제출 없음). 즉시실행기 호출에서는 꺼져 있다.'
         type: boolean
         default: false
-  # 평소 실행은 주문워커 즉시실행기(scripts/order_dispatcher.gs, Apps Script)가 대기 작업이 생기면 1분 안에 workflow_dispatch로 호출한다.
-  # GitHub cron은 10~40분씩 밀려서, 아래 예약은 즉시실행기가 멈췄을 때를 대비한 보조용(평일 업무시간 30분 간격)만 남김.
-  schedule:
-    - cron: "38 23 * * 0-4"           # KST 월~금 08:38
-    - cron: "8,38 0-5 * * 1-5"        # KST 월~금 09:08 ~ 14:38, 30분 간격
-    - cron: "8 6 * * 1-5"             # KST 월~금 15:08
 
 permissions:
   contents: write
   actions: write
 
+# 실행은 한 번에 하나만 한다. 같은 작업은 물론 다른 작업끼리도 겹치지 않는다(보필 로그인·제출 원장을 함께 쓰므로).
+# 진행 중인 실행은 취소하지 않는다. 대기 중인 실행이 새 요청에 밀려 취소되면 그 작업은 QUEUED로 남고
+# 즉시실행기가 다시 요청한다. 작업 선점은 워커의 Firebase 트랜잭션(QUEUED→RUNNING)이 한 번 더 막는다.
 concurrency:
   group: membership-order-worker
   cancel-in-progress: false
 
 jobs:
+  # 즉시실행기가 넘긴 작업 하나만 처리한다. 작업 ID 없는 수동 실행(고정 장바구니 시험 등)에서는 돌지 않는다.
   process-queue:
+    if: github.event_name == 'workflow_dispatch' && inputs.job_id != ''
     runs-on: ubuntu-latest
     container: mcr.microsoft.com/playwright:v1.55.0-noble
     timeout-minutes: 10
@@ -34,20 +42,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+      # 보필 작업만 처리하므로 이로움 세션(EROUM_STORAGE_STATE_JSON)은 필수가 아니다.
+      # 요청받은 작업이 있는데 Firebase 설정이 없으면 조용히 건너뛰지 않고 실패로 남긴다.
       - name: Check worker secrets
         id: secrets
         env:
           FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-          EROUM_STORAGE_STATE_JSON: ${{ secrets.EROUM_STORAGE_STATE_JSON }}
         shell: bash
         run: |
-          if [[ -z "$FIREBASE_DATABASE_URL" || -z "$FIREBASE_SERVICE_ACCOUNT_JSON" || -z "$EROUM_STORAGE_STATE_JSON" ]]; then
+          if [[ -z "$FIREBASE_DATABASE_URL" || -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "Worker secrets are not configured; skipping this run."
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "::error title=주문 워커 설정 오류::Firebase secret이 없어 요청받은 작업을 처리하지 못했습니다."
+            exit 1
           fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
       - name: Install worker dependencies
         if: steps.secrets.outputs.enabled == 'true'
         working-directory: worker/order-runner
@@ -95,13 +104,15 @@ jobs:
           BOFEEL_LOGIN_PASSWORD: ${{ secrets.BOFEEL_LOGIN_PASSWORD }}
           B2B_SUBMISSION_LEDGER_KEY: ${{ secrets.B2B_SUBMISSION_LEDGER_KEY }}
           FIREBASE_QUEUE_PATH: order-ops/jobs
+          # 즉시실행기가 넘긴 작업 ID. 셸 명령에 끼워 넣지 않고 환경변수로만 전달하며 워커가 형식을 검사한다.
+          ORDER_JOB_ID: ${{ inputs.job_id }}
           WORKER_ID: github-actions-order-worker
           GITHUB_TOKEN: ${{ github.token }}
         run: npm start
 
   # 브라우저 없는 이로움·보필 HTTP 장바구니 준비. 주문을 제출하지 않는다(시험 상품 담기→주문서 초안→삭제).
   # 수동 실행에서 b2b_http_cart 입력을 직접 켜고 저장소 변수 ENABLE_B2B_HTTP_CART가 'true'일 때만 돈다.
-  # 즉시실행기(Apps Script) 호출과 예약 실행에서는 돌지 않는다.
+  # 즉시실행기(Apps Script) 호출에서는 돌지 않는다(예약 실행은 없다).
   # 위 주문 처리 job과 승인·잠금·원장·Playwright 흐름은 이 job과 공유하지 않는다.
   b2b-http-cart:
     if: github.event_name == 'workflow_dispatch' && inputs.b2b_http_cart == true && vars.ENABLE_B2B_HTTP_CART == 'true'
