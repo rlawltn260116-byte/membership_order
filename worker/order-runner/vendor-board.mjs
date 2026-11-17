@@ -3,8 +3,8 @@
 import { deliverySchedule, normalizeChannelName } from "./schedule.mjs";
 import { PARTS_ORDER_KIND } from "./order-classification.mjs";
 
-export const BOARD_STATUS = { BEFORE: "BEFORE", IN_PROGRESS: "IN_PROGRESS", DONE: "DONE" };
-export const BOARD_STATUS_LABEL = { BEFORE: "발주 전", IN_PROGRESS: "진행 중", DONE: "발주 완료" };
+export const BOARD_STATUS = { BEFORE: "BEFORE", IN_PROGRESS: "IN_PROGRESS", DONE: "DONE", NO_ORDER: "NO_ORDER" };
+export const BOARD_STATUS_LABEL = { BEFORE: "발주 전", IN_PROGRESS: "진행 중", DONE: "발주 완료", NO_ORDER: "발주없음" };
 // 서버 자동 준비·제출이 연결된 B2B몰. 나머지 B2B몰은 사이트에서 사람이 주문한다.
 export const AUTOMATED_B2B_CHANNELS = ["보필", "이로움"];
 const ACTIVE_STATUSES = ["QUEUED", "RUNNING", "AWAITING_REVIEW", "REVIEWED", "SUBMIT_QUEUED"];
@@ -89,12 +89,21 @@ export function jobOrderDone(job) {
   return job?.status === "COMPLETED" || Boolean(job?.vendorOrderDone?.doneAt);
 }
 
-export function vendorBoard(jobs, now = new Date()) {
+// 발주없음 표시: 날짜와 회차 키로 한 칸씩 저장한다. Firebase 키에 쓸 수 없는 `.`을 피하려고 인코딩한다.
+export function noOrderKey(date, scheduleKeyValue) {
+  return encodeURIComponent(`${date}|${scheduleKeyValue}`).replace(/\./g, "%2E");
+}
+
+export function vendorBoard(jobs, now = new Date(), noOrders = []) {
   const today = kstParts(now);
   const todays = (jobs ?? []).filter((job) => job && job.orderKind !== PARTS_ORDER_KIND && kstParts(job.createdAt)?.date === today.date);
+  const todaysNoOrder = new Set((noOrders ?? []).filter((record) => record && record.date === today.date).map((record) => record.scheduleKey));
   return boardEntries.map((entry) => {
     const entryJobs = todays.filter((job) => entryForJob(job)?.key === entry.key);
-    const status = entryJobs.some(jobOrderDone) ? BOARD_STATUS.DONE : entryJobs.length ? BOARD_STATUS.IN_PROGRESS : BOARD_STATUS.BEFORE;
+    const status = entryJobs.some(jobOrderDone)
+      ? BOARD_STATUS.DONE
+      : entryJobs.length ? BOARD_STATUS.IN_PROGRESS
+        : todaysNoOrder.has(entry.key) ? BOARD_STATUS.NO_ORDER : BOARD_STATUS.BEFORE;
     return {
       key: entry.key,
       entry,
@@ -102,7 +111,7 @@ export function vendorBoard(jobs, now = new Date()) {
       jobs: entryJobs,
       status,
       statusLabel: BOARD_STATUS_LABEL[status],
-      overdue: status !== BOARD_STATUS.DONE && Boolean(entry.orderDeadline) && today.time > entry.orderDeadline,
+      overdue: status !== BOARD_STATUS.DONE && status !== BOARD_STATUS.NO_ORDER && Boolean(entry.orderDeadline) && today.time > entry.orderDeadline,
       waitingReview: entryJobs.some((job) => ACTIVE_STATUSES.includes(job.status)),
     };
   });
@@ -114,6 +123,7 @@ export function boardSummary(board) {
     done: board.filter((item) => item.status === BOARD_STATUS.DONE).length,
     inProgress: board.filter((item) => item.status === BOARD_STATUS.IN_PROGRESS).length,
     before: board.filter((item) => item.status === BOARD_STATUS.BEFORE).length,
+    noOrder: board.filter((item) => item.status === BOARD_STATUS.NO_ORDER).length,
     overdue: board.filter((item) => item.overdue).length,
   };
 }
@@ -195,6 +205,34 @@ export function manualDonePatch(job, now = new Date(), actorName = "주문 운�
     vendorOrderDone: { doneAt: at, doneByName: actorName, method: entry.method, scheduleKey: entry.key, previousStatus: job.status },
     updatedAt: at,
     [`auditLogs/${auditId}`]: { id: auditId, jobId: job.id, action: "VENDOR_ORDER_MARKED_DONE", actorName, actorEmail: "", detail: `${entry.vendor} ${entry.method} 발주 완료 표시 (${job.totalRows ?? 0}건)`, createdAt: at },
+  };
+}
+
+// 발주없음 표시. 오늘 올린 발주서가 없는 회차만 가능하며 Firebase 루트에 대한 다중 경로 갱신으로 쓴다.
+export function manualNoOrderPatch(item, now = new Date(), actorName = "주문 운영자") {
+  const entry = item?.entry;
+  if (!entry || findBoardEntry(entry.key)?.key !== entry.key || !vendorAction(entry)) throw new Error("시간표에 없는 업체는 발주없음으로 표시할 수 없습니다.");
+  if (item.jobs?.length) throw new Error("오늘 올린 발주서가 있어 발주없음으로 표시할 수 없습니다.");
+  if (item.status === BOARD_STATUS.NO_ORDER) throw new Error("이미 발주없음으로 표시된 회차입니다.");
+  const today = kstParts(now).date;
+  const at = now.toISOString();
+  const auditId = `${now.getTime()}-vendor-no-order`;
+  const record = { date: today, scheduleKey: entry.key, channel: entry.channel, vendor: entry.vendor, method: entry.method, markedAt: at, markedByName: actorName };
+  return {
+    [`vendorNoOrders/${noOrderKey(today, entry.key)}`]: record,
+    [`auditLogs/${auditId}`]: { id: auditId, action: "VENDOR_NO_ORDER_MARKED", actorName, actorEmail: "", detail: `${entry.vendor} ${entry.method} ${today} 발주없음 표시`, createdAt: at },
+  };
+}
+
+export function manualNoOrderUndoPatch(entryKey, now = new Date(), actorName = "주문 운영자") {
+  const entry = findBoardEntry(entryKey);
+  if (!entry) throw new Error("시간표에 없는 회차입니다.");
+  const today = kstParts(now).date;
+  const at = now.toISOString();
+  const auditId = `${now.getTime()}-vendor-no-order-undone`;
+  return {
+    [`vendorNoOrders/${noOrderKey(today, entry.key)}`]: null,
+    [`auditLogs/${auditId}`]: { id: auditId, action: "VENDOR_NO_ORDER_UNDONE", actorName, actorEmail: "", detail: `${entry.vendor} ${entry.method} ${today} 발주없음 표시 취소`, createdAt: at },
   };
 }
 

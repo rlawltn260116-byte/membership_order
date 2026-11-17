@@ -6,6 +6,7 @@ import { PARTS_ORDER_KIND } from "./order-classification.mjs";
 import {
   boardEntries, vendorBoard, boardSummary, vendorAction, entryForJob, uploadTargetProblem,
   orderDraft, orderSheetRows, printableOrderHtml, manualDonePatch, manualDoneUndoPatch, findBoardEntry,
+  noOrderKey, manualNoOrderPatch, manualNoOrderUndoPatch,
 } from "./vendor-board.mjs";
 
 const NOW = new Date("2026-11-17T10:05:00+09:00");
@@ -72,8 +73,46 @@ test("오늘 작업으로 발주 전·진행 중·발주 완료를 정하고 지
   assert.equal(summary.total, deliverySchedule.length);
   assert.equal(summary.done, 2);
   assert.equal(summary.inProgress, 2);
-  assert.equal(summary.done + summary.inProgress + summary.before, summary.total);
+  assert.equal(summary.done + summary.inProgress + summary.before + summary.noOrder, summary.total);
   assert.equal(entryForJob(jobs[4]), null);
+});
+
+test("발주없음 표시는 오늘 같은 회차에만 적용되고 마감 지남으로 세지 않으며 발주서가 있으면 무시한다", () => {
+  const noOrders = [
+    { date: "2026-11-17", scheduleKey: key("유광정밀", "10:30"), channel: "유광정밀", vendor: "유광정밀", method: "팩스" },
+    { date: "2026-11-16", scheduleKey: key("선인케어", "09:30"), channel: "선인케어", vendor: "선인케어", method: "카톡" },
+    { date: "2026-11-17", scheduleKey: key("나이스텍", "10:00"), channel: "나이스텍", vendor: "나이스텍", method: "이메일" },
+  ];
+  const jobs = [job({ id: "x", sourceSystem: "나이스텍", scheduleKey: key("나이스텍", "10:00"), createdAt: "2026-11-17T09:00:00+09:00" })];
+  const board = vendorBoard(jobs, NOW, noOrders);
+  const item = (k) => board.find((value) => value.key === k);
+  assert.equal(item(key("유광정밀", "10:30")).status, "NO_ORDER");
+  assert.equal(item(key("유광정밀", "10:30")).statusLabel, "발주없음");
+  assert.equal(item(key("유광정밀", "10:30")).overdue, false);
+  assert.equal(item(key("선인케어", "09:30")).status, "BEFORE");
+  assert.equal(item(key("선인케어", "09:30")).overdue, true);
+  assert.equal(item(key("나이스텍", "10:00")).status, "IN_PROGRESS");
+  const summary = boardSummary(board);
+  assert.equal(summary.noOrder, 1);
+  assert.equal(summary.done + summary.inProgress + summary.before + summary.noOrder, summary.total);
+  assert.equal(vendorBoard(jobs, NOW).find((value) => value.key === key("유광정밀", "10:30")).status, "BEFORE");
+});
+
+test("발주없음 기록은 시간표 키 인코딩을 쓰고 완료 발주서가 없는 회차만 표시·취소한다", () => {
+  assert.equal(noOrderKey("2026-11-17", key("나눔에이치앤씨", "10:00")).includes("."), false);
+  const entry = findBoardEntry(key("유광정밀", "10:30"));
+  const patch = manualNoOrderPatch({ entry, jobs: [], status: "BEFORE" }, NOW, "모의 운영자");
+  const [recordPath, record] = Object.entries(patch).find(([name]) => name.startsWith("vendorNoOrders/"));
+  assert.equal(recordPath, `vendorNoOrders/${noOrderKey("2026-11-17", key("유광정밀", "10:30"))}`);
+  assert.equal(record.scheduleKey, key("유광정밀", "10:30"));
+  assert.equal(record.markedByName, "모의 운영자");
+  assert.equal(Object.entries(patch).find(([name]) => name.startsWith("auditLogs/"))[1].action, "VENDOR_NO_ORDER_MARKED");
+  assert.throws(() => manualNoOrderPatch({ entry, jobs: [job({})], status: "IN_PROGRESS" }, NOW), /발주서가 있어/);
+  assert.throws(() => manualNoOrderPatch({ entry, jobs: [], status: "NO_ORDER" }, NOW), /이미/);
+  assert.throws(() => manualNoOrderPatch({ entry: { ...entry, channel: "미등록", key: "미등록|10:00" }, jobs: [], status: "BEFORE" }, NOW), /시간표/);
+  const undo = manualNoOrderUndoPatch(key("유광정밀", "10:30"), NOW, "모의 운영자");
+  assert.equal(undo[`vendorNoOrders/${noOrderKey("2026-11-17", key("유광정밀", "10:30"))}`], null);
+  assert.throws(() => manualNoOrderUndoPatch("없는|회차", NOW), /시간표/);
 });
 
 test("업체 카드와 다른 업체가 파일명에 있으면 업로드를 멈춘다", () => {

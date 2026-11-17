@@ -1,4 +1,5 @@
-export type BoardStatus = "BEFORE" | "IN_PROGRESS" | "DONE";
+export type BoardStatus = "BEFORE" | "IN_PROGRESS" | "DONE" | "NO_ORDER";
+export type VendorNoOrderRecord = { date: string; scheduleKey: string; channel: string; vendor: string; method: string; markedAt: string; markedByName: string };
 export type BoardEntry = { channel: string; vendor: string; round?: string; method: string; note?: string; url?: string; statementChannel?: string; orderDeadline: string | null; receiptDeadline: string | null; index: number; key: string };
 export type VendorActionKind = "B2B_AUTO" | "B2B_MANUAL" | "ERP" | "EMAIL" | "FAX" | "KAKAO";
 export type VendorAction = { kind: VendorActionKind; label: string; serverPrepare: boolean; manualDone: boolean; steps: string[]; url: string | null; warnings: string[] };
@@ -8,6 +9,9 @@ type DraftRow = { orderId?: string; destination?: string; address?: string; addr
 export type BoardItem<J> = { key: string; entry: BoardEntry; action: VendorAction | null; jobs: J[]; status: BoardStatus; statusLabel: string; overdue: boolean; waitingReview: boolean };
 export const BOARD_STATUS: Record<BoardStatus, BoardStatus>;
 export const BOARD_STATUS_LABEL: Record<BoardStatus, string>;
+export function noOrderKey(date: string, scheduleKey: string): string;
+export function manualNoOrderPatch<J extends BoardJob>(item: { entry: BoardEntry; jobs?: J[]; status?: BoardStatus } | null | undefined, now?: Date, actorName?: string): Record<string, unknown>;
+export function manualNoOrderUndoPatch(entryKey: string, now?: Date, actorName?: string): Record<string, unknown>;
 export const AUTOMATED_B2B_CHANNELS: string[];
 export const boardEntries: BoardEntry[];
 export const ORDER_SHEET_HEADERS: string[];
@@ -17,8 +21,8 @@ export function vendorAction(entryOrChannel: BoardEntry | string | undefined): V
 export function kstParts(value: Date | string | undefined): { date: string; time: string; weekday: number } | null;
 export function entryForJob(job: BoardJob | null | undefined): BoardEntry | null;
 export function jobOrderDone(job: BoardJob | null | undefined): boolean;
-export function vendorBoard<J extends BoardJob>(jobs: J[], now?: Date): BoardItem<J>[];
-export function boardSummary(board: BoardItem<unknown>[]): { total: number; done: number; inProgress: number; before: number; overdue: number };
+export function vendorBoard<J extends BoardJob>(jobs: J[], now?: Date, noOrders?: VendorNoOrderRecord[]): BoardItem<J>[];
+export function boardSummary(board: BoardItem<unknown>[]): { total: number; done: number; inProgress: number; before: number; noOrder: number; overdue: number };
 export function uploadTargetProblem(target: { channel: string } | null | undefined, filename: string): string | null;
 export function orderDraft(entry: BoardEntry, rows: DraftRow[] | undefined, now?: Date): { subject: string; text: string };
 export function orderSheetRows(rows: DraftRow[] | undefined): string[][];

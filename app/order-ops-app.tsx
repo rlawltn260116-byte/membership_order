@@ -8,7 +8,7 @@ import type { Workbook } from "exceljs";
 import WorkbookSheetPicker from "./workbook-sheet-picker";
 
 import { orderChannelGroups, normalizeChannelName, nextPreparation, scheduleLabel } from "../worker/order-runner/schedule.mjs";
-import { vendorBoard, boardSummary, vendorAction, entryForJob, jobOrderDone, uploadTargetProblem, orderDraft, orderSheetRows, printableOrderHtml, manualDonePatch, manualDoneUndoPatch, ORDER_SHEET_HEADERS, BOARD_STATUS_LABEL, kstParts, type BoardEntry, type BoardItem, type VendorOrderDone } from "../worker/order-runner/vendor-board.mjs";
+import { vendorBoard, boardSummary, vendorAction, entryForJob, jobOrderDone, uploadTargetProblem, orderDraft, orderSheetRows, printableOrderHtml, manualDonePatch, manualDoneUndoPatch, manualNoOrderPatch, manualNoOrderUndoPatch, ORDER_SHEET_HEADERS, BOARD_STATUS, BOARD_STATUS_LABEL, kstParts, type BoardEntry, type BoardItem, type VendorNoOrderRecord, type VendorOrderDone } from "../worker/order-runner/vendor-board.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -69,7 +69,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { createOrderJob, getOrderJob, listOrderJobs, updateOrderJob } from "@/lib/firebase-order-ops";
+import { createOrderJob, getOrderJob, listOrderJobs, listVendorNoOrders, updateOrderJob, updateOrderOpsPaths } from "@/lib/firebase-order-ops";
 import InventoryRegistrationPage from "./inventory-registration-page";
 
 type OrderRow = {
@@ -697,7 +697,7 @@ function buildCalendarDays(monthDate: Date, jobs: Job[]) {
   });
 }
 
-function OverviewPage({ jobs, onOpenJob, onOpenInventory, onSelectVendor }: { jobs: Job[]; onOpenJob: (id: string) => void; onOpenInventory: () => void; onSelectVendor: (key: string) => void }) {
+function OverviewPage({ jobs, noOrders, onOpenJob, onOpenInventory, onSelectVendor }: { jobs: Job[]; noOrders: VendorNoOrderRecord[]; onOpenJob: (id: string) => void; onOpenInventory: () => void; onSelectVendor: (key: string) => void }) {
   const steps = ["발주 접수", "데이터 검증", "운영자 승인", "주문 실행", "결과 확인", "명세서 검수", "입출고 등록"];
   const columns = [
     { title: "검토 필요", hint: "입력값과 예외를 확인하세요", color: "amber", statuses: ["HOLD", "FAILED"] },
@@ -706,7 +706,7 @@ function OverviewPage({ jobs, onOpenJob, onOpenInventory, onSelectVendor }: { jo
   ];
   return (
     <div className="space-y-6">
-      <VendorBoardSection jobs={jobs} onSelect={onSelectVendor} />
+      <VendorBoardSection jobs={jobs} noOrders={noOrders} onSelect={onSelectVendor} />
       <section className="rounded-2xl border border-slate-200/70 bg-white px-5 py-6">
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 xl:grid-cols-7">
           {steps.map((step, index) => (
@@ -760,6 +760,7 @@ function boardName(entry: BoardEntry) {
 function boardStatusClass(status: string) {
   if (status === "DONE") return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (status === "IN_PROGRESS") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (status === BOARD_STATUS.NO_ORDER) return "border-sky-200 bg-sky-50 text-sky-700";
   return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
@@ -772,9 +773,9 @@ function methodIcon(kind: string | undefined) {
 }
 
 // 시간표 순서로 오늘의 업체 회차를 나열한다. 카드를 누르면 발주 형태별 창이 열린다.
-function VendorBoardSection({ jobs, onSelect }: { jobs: Job[]; onSelect: (key: string) => void }) {
+function VendorBoardSection({ jobs, noOrders, onSelect }: { jobs: Job[]; noOrders: VendorNoOrderRecord[]; onSelect: (key: string) => void }) {
   const now = new Date();
-  const board = vendorBoard(jobs, now);
+  const board = vendorBoard(jobs, now, noOrders);
   const summary = boardSummary(board);
   const today = kstParts(now);
   const times = [...new Set(board.map((item) => item.entry.orderDeadline ?? "마감 미정"))];
@@ -789,6 +790,7 @@ function VendorBoardSection({ jobs, onSelect }: { jobs: Job[]; onSelect: (key: s
           <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">발주 완료 {summary.done}/{summary.total}</span>
           <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-amber-700">진행 중 {summary.inProgress}</span>
           <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-slate-600">발주 전 {summary.before}</span>
+          {summary.noOrder ? <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-sky-700">발주없음 {summary.noOrder}</span> : null}
           {summary.overdue ? <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">마감 지남 {summary.overdue}</span> : null}
         </div>
       </div>
@@ -930,7 +932,7 @@ function VendorOrderActions({ job, loading, onNotice, onMarkDone, onUndoDone }: 
   );
 }
 
-function VendorOrderDialog({ item, loading, notice, onClose, onUpload, onOpenJob, onNotice, onMarkDone, onUndoDone }: {
+function VendorOrderDialog({ item, loading, notice, onClose, onUpload, onOpenJob, onNotice, onMarkDone, onUndoDone, onNoOrder, onUndoNoOrder }: {
   item: BoardItem<Job> | null;
   loading: boolean;
   notice: string;
@@ -940,6 +942,8 @@ function VendorOrderDialog({ item, loading, notice, onClose, onUpload, onOpenJob
   onNotice: (text: string) => void;
   onMarkDone: (job: Job) => void;
   onUndoDone: (job: Job) => void;
+  onNoOrder: (item: BoardItem<Job>) => void;
+  onUndoNoOrder: (item: BoardItem<Job>) => void;
 }) {
   const entry = item?.entry;
   const action = item?.action;
@@ -961,6 +965,26 @@ function VendorOrderDialog({ item, loading, notice, onClose, onUpload, onOpenJob
               <Button onClick={() => onUpload(entry)} disabled={loading}><Upload className="h-4 w-4" />{entry.channel} 발주서 업로드</Button>
               {(action?.kind === "B2B_MANUAL" || action?.kind === "ERP") && action.url ? <Button variant="outline" onClick={() => window.open(action.url ?? "", "_blank", "noopener")}><ExternalLink className="h-4 w-4" />{action.kind === "ERP" ? "ERP 포털 열기" : "B2B몰 열기"}</Button> : null}
             </div>
+            {item.status === BOARD_STATUS.NO_ORDER ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3">
+                <p className="text-sm text-sky-800">오늘은 발주없음으로 표시했습니다.</p>
+                <Button variant="outline" size="sm" disabled={loading} onClick={() => onUndoNoOrder(item)}><Undo2 className="h-4 w-4" />발주없음 표시 취소</Button>
+              </div>
+            ) : item.status === BOARD_STATUS.BEFORE ? (
+              <AlertDialog>
+                <AlertDialogTrigger asChild><Button variant="outline" disabled={loading}>발주없음</Button></AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{boardName(entry)} 오늘 발주없음으로 표시할까요?</AlertDialogTitle>
+                    <AlertDialogDescription>오늘 이 업체에 보낼 발주가 없을 때만 누르세요. 메일·팩스·카톡을 보내지 않고 발주없음 표시만 남깁니다. 나중에 이 업체 발주서를 올리면 발주서 상태가 우선 표시됩니다.</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>취소</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => onNoOrder(item)}>발주없음 표시</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : null}
             <p className="text-xs text-slate-500">{action?.kind === "B2B_AUTO" ? "업로드하면 주문 관리 화면에서 시트 확인·저장 후 서버 준비 요청을 진행합니다. 실제 제출은 검토와 최종 승인 뒤에만 실행됩니다." : "업로드하면 주문 관리 화면에서 시트 확인·저장한 뒤, 이 창이나 주문 상세에서 발주 형태에 맞는 초안을 만들고 보낸 뒤 완료 표시합니다."}</p>
             {notice ? <p className="rounded-lg bg-[#fff8e6] px-3 py-2 text-sm text-slate-800">{notice}</p> : null}
             <div className="space-y-3">
@@ -1046,6 +1070,7 @@ export default function OrderOpsApp() {
   const [uploadTarget, setUploadTarget] = useState<UploadTarget | null>(null);
   const [vendorDialogKey, setVendorDialogKey] = useState<string | null>(null);
   const [vendorNotice, setVendorNotice] = useState("");
+  const [vendorNoOrders, setVendorNoOrders] = useState<VendorNoOrderRecord[]>([]);
   const partsJobs = jobs.filter(job => job.orderKind === PARTS_ORDER_KIND);
   const visibleJobs = jobs.filter((job) => {
     if (job.orderKind === PARTS_ORDER_KIND) return false;
@@ -1098,9 +1123,10 @@ export default function OrderOpsApp() {
     const generation = uploadGeneration.current;
     if (!silent) setLoading(true);
     try {
-      const data = await listOrderJobs();
+      const [data, noOrders] = await Promise.all([listOrderJobs(), listVendorNoOrders()]);
       const refreshedJobs = data as Job[];
       setJobs(refreshedJobs);
+      setVendorNoOrders(noOrders);
       if (generation !== uploadGeneration.current || hasUpload.current) return;
       if (activeJob) {
         const refreshedActiveJob = refreshedJobs.find((job) => job.id === activeJob.id);
@@ -1368,6 +1394,32 @@ export default function OrderOpsApp() {
     }
   }
 
+  async function markVendorNoOrder(item: BoardItem<Job>) {
+    setLoading(true);
+    try {
+      await updateOrderOpsPaths(manualNoOrderPatch(item, new Date()));
+      setVendorNotice(`${boardName(item.entry)}: 발주없음으로 표시했습니다.`);
+      await loadJobs(true);
+    } catch (error) {
+      setVendorNotice(error instanceof Error ? error.message : "발주없음 표시 저장 오류");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function undoVendorNoOrder(item: BoardItem<Job>) {
+    setLoading(true);
+    try {
+      await updateOrderOpsPaths(manualNoOrderUndoPatch(item.key, new Date()));
+      setVendorNotice(`${boardName(item.entry)}: 발주없음 표시를 취소했습니다.`);
+      await loadJobs(true);
+    } catch (error) {
+      setVendorNotice(error instanceof Error ? error.message : "발주없음 표시 취소 오류");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadJobs(), 0);
     return () => window.clearTimeout(timeout);
@@ -1384,7 +1436,7 @@ export default function OrderOpsApp() {
   const sheetProblem = workbookProblem(activeJob ?? { filename, selectedSheet, sourceWorkbook, rows: previewRows });
   const activeAction = activeJob ? vendorAction(entryForJob(activeJob) ?? normalizeChannelName(activeJob.sourceSystem)) : null;
   const serverPrepareBlocked = Boolean(activeAction && !activeAction.serverPrepare);
-  const vendorDialogItem = vendorDialogKey ? vendorBoard(jobs).find((item) => item.key === vendorDialogKey) ?? null : null;
+  const vendorDialogItem = vendorDialogKey ? vendorBoard(jobs, new Date(), vendorNoOrders).find((item) => item.key === vendorDialogKey) ?? null : null;
   const duplicateFiles = duplicateOrderFiles(activeJob ?? { filename, sourceSystem: previewRows[0]?.sourceSystem }, jobs);
 
   return (
@@ -1453,7 +1505,7 @@ export default function OrderOpsApp() {
             </section> : null}
 
         {viewMode === "overview" ? (
-          <OverviewPage jobs={jobs} onOpenJob={(id) => { setViewMode("orders"); void openJob(id); }} onOpenInventory={() => setViewMode("inventory")} onSelectVendor={(key) => { setVendorNotice(""); setVendorDialogKey(key); }} />
+          <OverviewPage jobs={jobs} noOrders={vendorNoOrders} onOpenJob={(id) => { setViewMode("orders"); void openJob(id); }} onOpenInventory={() => setViewMode("inventory")} onSelectVendor={(key) => { setVendorNotice(""); setVendorDialogKey(key); }} />
         ) : viewMode === "inventory" ? (
           <InventoryRegistrationPage />
         ) : viewMode === "calendar" ? (
@@ -1603,6 +1655,8 @@ export default function OrderOpsApp() {
         onNotice={setVendorNotice}
         onMarkDone={(job) => void markVendorOrderDone(job)}
         onUndoDone={(job) => void undoVendorOrderDone(job)}
+        onNoOrder={(item) => void markVendorNoOrder(item)}
+        onUndoNoOrder={(item) => void undoVendorNoOrder(item)}
       />
     </main>
   );

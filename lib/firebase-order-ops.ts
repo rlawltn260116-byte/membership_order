@@ -38,3 +38,14 @@ export async function updateOrderJob(id: string, patch: Record<string, unknown>)
   await request(`jobs/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
   return getOrderJob(id);
 }
+
+// 발주없음 표시 목록. 키는 날짜와 회차를 인코딩한 값이고 값에 날짜·회차 키가 들어 있다.
+export async function listVendorNoOrders() {
+  const data = await request<Record<string, { date: string; scheduleKey: string; channel: string; vendor: string; method: string; markedAt: string; markedByName: string }> | null>("vendorNoOrders");
+  return Object.values(data ?? {});
+}
+
+// 루트에 대한 다중 경로 갱신. 값이 null인 경로는 지운다(발주없음 취소).
+export async function updateOrderOpsPaths(patch: Record<string, unknown>) {
+  await request("", { method: "PATCH", body: JSON.stringify(patch) });
+}
