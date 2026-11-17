@@ -217,6 +217,9 @@ export function updateJobWithCenters(root, id, patch, now, worker = false) {
   const ids = (current.rows || []).filter(row => row.centerQueueId).map(row => row.centerQueueId);
   const manualDone = ids.length && job.status === 'COMPLETED' && !current.vendorOrderDone?.doneAt && patch.vendorOrderDone?.doneAt;
   const manualUndo = ids.length && current.status === 'COMPLETED' && current.vendorOrderDone?.doneAt && patch.vendorOrderDone === null;
+  const manualSignature = value => JSON.stringify([Boolean(value), ...['doneAt', 'doneByName', 'method', 'scheduleKey', 'previousStatus'].map(key => value?.[key] ?? null)]);
+  if (ids.length && manualSignature(current.vendorOrderDone) !== manualSignature(job.vendorOrderDone) && !manualDone && !manualUndo)
+    throw new Error('센터 포함 작업의 수동 완료 기록은 완료 표시·취소와 함께 변경해야 합니다.');
   if (manualDone || manualUndo) {
     const entry = entryForJob(current);
     if (worker || !vendorAction(entry)?.manualDone || channelFor(current.sourceSystem) !== entry?.channel || uncertain(current) || uncertain(job))

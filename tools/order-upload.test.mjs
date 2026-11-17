@@ -39,6 +39,7 @@ async function screen({ centerQueue } = {}) {
     useState: state, useRef: initial => state(() => ({ current: initial }))[0], useMemo: fn => fn(), useEffect: () => {},
     createOrderJob: async value => { const job = { ...value, id: saved.length ? `saved-${saved.length + 1}` : 'saved' }; saved.push(job); return job; },
     listOrderJobs: async () => saved,
+    listVendorNoOrders: async () => [],
     getOrderJob: async id => saved.find(job => job.id === id),
     updateOrderJob: async (...args) => {
       writes.push(args);

@@ -49,7 +49,16 @@ async function firebase(initial = {}) {
   const context = vm.createContext({ ...core, crypto: webcrypto, Date, fetch: async (url, init = {}) => {
     requests.push({ method: init.method || 'GET', url });
     assert.ok(url.endsWith('/order-ops.json') || url.includes('/order-ops/'), '허용된 모의 경로만 사용');
-    if (url.endsWith('/order-ops.json')) {
+    if (url.endsWith('/order-ops.json') || url.endsWith('/order-ops/.json')) {
+      if (init.method === 'PATCH') {
+        for (const [path, value] of Object.entries(JSON.parse(init.body))) {
+          const keys = path.split('/'); let target = root;
+          for (const key of keys.slice(0, -1)) target = target[key] ??= {};
+          if (value === null) delete target[keys.at(-1)]; else target[keys.at(-1)] = value;
+        }
+        version++;
+        return { ok: true, status: 200, json: async () => null };
+      }
       if (init.method === 'PUT') {
         if (init.headers['If-Match'] !== String(version)) { collisions++; return { status: 412, ok: false }; }
         root = JSON.parse(init.body); version++;
@@ -369,6 +378,10 @@ test('수동 완료 접점은 자동 B2B 승인·제출 우회와 업체·회차
   const automated = await fixture();
   core.createJobWithCenters(automated.root, 'auto', manufacturer(), morning);
   const autoDb = await firebase(automated.root);
+  await assert.rejects(autoDb.context.updateOrderJob('auto', { vendorOrderDone: {
+    doneAt: morning, doneByName: '모의 담당자', method: 'B2B몰', scheduleKey: '보필|09:00', previousStatus: 'READY',
+  } }), /수동 완료 기록/);
+  await assert.rejects(autoDb.context.updateOrderJob('auto', { 'vendorOrderDone/doneAt': morning }), /수동 완료 기록/);
   await assert.rejects(autoDb.context.updateOrderJob('auto', { status: 'COMPLETED', vendorOrderDone: {
     doneAt: morning, doneByName: '모의 담당자', method: 'B2B몰', scheduleKey: '보필|09:00', previousStatus: 'READY',
   } }), /수동 완료 표시/);
@@ -387,6 +400,24 @@ test('수동 완료 접점은 자동 B2B 승인·제출 우회와 업체·회차
   db.root['center-queue'].entries[prepared[0].id].completedVia = 'SUBMIT';
   await assert.rejects(db.context.updateOrderJob('manual', manualDoneUndoPatch(db.root.jobs.manual, new Date(morning))), /사람이 완료 표시/);
   assert.equal(db.root['center-queue'].entries[prepared[0].id].state, 'COMPLETED');
+});
+
+test('발주없음의 루트 PATCH와 센터 예약 ETag 트랜잭션이 겹쳐도 양쪽 자료가 보존된다', async () => {
+  const { root, prepared } = await fixture();
+  const db = await firebase(root);
+  const noOrder = { date: '2026-11-17', scheduleKey: '세비앙|09:30', channel: '세비앙', vendor: '세비앙', method: 'ERP', markedAt: morning, markedByName: '모의 담당자' };
+  const [job] = await Promise.all([
+    db.context.createOrderJob(manufacturer()),
+    db.context.updateOrderOpsPaths({ 'vendorNoOrders/mock': noOrder, 'auditLogs/mock': { action: 'VENDOR_NO_ORDER' } }),
+  ]);
+  assert.ok(db.collisions > 0);
+  assert.equal(db.root.vendorNoOrders.mock.scheduleKey, '세비앙|09:30');
+  assert.equal(db.root.auditLogs.mock.action, 'VENDOR_NO_ORDER');
+  assert.equal(db.root['center-queue'].entries[prepared[0].id].jobId, job.id);
+  assert.equal(job.rows.length, 2);
+  await db.context.updateOrderOpsPaths({ 'vendorNoOrders/mock': null });
+  assert.equal(db.root.vendorNoOrders.mock, undefined);
+  assert.equal(db.root['center-queue'].entries[prepared[0].id].state, 'RESERVED');
 });
 
 test('Firebase REST의 null 포함 제출 배열도 UNKNOWN 예약을 유지하며 명확한 사유로 변경을 차단한다', async () => {
