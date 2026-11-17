@@ -8,6 +8,7 @@ import type { Workbook } from "exceljs";
 import WorkbookSheetPicker from "./workbook-sheet-picker";
 
 import { orderChannelGroups, normalizeChannelName, nextPreparation, scheduleLabel } from "../worker/order-runner/schedule.mjs";
+import { vendorBoard, boardSummary, vendorAction, entryForJob, jobOrderDone, uploadTargetProblem, orderDraft, orderSheetRows, printableOrderHtml, manualDonePatch, manualDoneUndoPatch, ORDER_SHEET_HEADERS, BOARD_STATUS_LABEL, kstParts, type BoardEntry, type BoardItem, type VendorOrderDone } from "../worker/order-runner/vendor-board.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -36,6 +37,13 @@ import {
   UserRound,
   Search,
   ArrowRight,
+  Mail,
+  Printer,
+  MessageCircle,
+  ExternalLink,
+  Copy,
+  Undo2,
+  Globe,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,6 +68,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { createOrderJob, getOrderJob, listOrderJobs, updateOrderJob } from "@/lib/firebase-order-ops";
 import InventoryRegistrationPage from "./inventory-registration-page";
 
@@ -96,6 +105,8 @@ type OrderRow = {
 
 type Job = {
   orderKind?: string;
+  scheduleKey?: string | null;
+  vendorOrderDone?: VendorOrderDone | null;
   selectedSheet?: string;
   sourceWorkbook?: SourceWorkbook;
   scheduledPreparation?: { runAt: string; receiptDeadlineAt: string; method: string } | null;
@@ -172,6 +183,8 @@ type Job = {
     scope: "PREPARE" | "SUBMIT";
   };
 };
+
+type UploadTarget = { key: string; channel: string; vendor: string; method: string };
 
 type AuditLog = {
   id: string;
@@ -377,11 +390,18 @@ async function loadXlsx(file: File) {
   return workbook;
 }
 
-function parseXlsx(workbook: Workbook, filename: string, selectedSheet: string) {
+function parseXlsx(workbook: Workbook, filename: string, selectedSheet: string, target: UploadTarget | null = null) {
   const sheet = selectWorksheet(workbook, selectedSheet);
   const matrix = worksheetMatrix(sheet);
-  const rows = parseThkcWorkbookRows(matrix, /보필/.test(filename) ? "bofeel" : "eroum", filename);
-  const parsed = rows.length ? rows : parseGenericWorkbookRows(matrix);
+  // 업체 카드에서 올린 파일은 그 업체로 확정한다. 파일명 추정보다 사람이 고른 업체가 우선이다.
+  const destinationVendor = target ? (target.channel === "보필" ? "bofeel" : "eroum") : /보필/.test(filename) ? "bofeel" : "eroum";
+  const rows = parseThkcWorkbookRows(matrix, destinationVendor, filename);
+  const generic = rows.length ? [] : parseGenericWorkbookRows(matrix);
+  if (target) {
+    const other = generic.map((row) => normalizeChannelName(cell(row, "source_system") || cell(row, "site") || cell(row, "erp"))).find((channel) => channel && channel !== target.channel);
+    if (other) throw new Error(`발주서의 업체(${other})가 선택한 업체(${target.channel})와 다릅니다. 업체를 확인해 주세요.`);
+  }
+  const parsed = (rows.length ? rows : generic).map((row) => target ? { ...row, source_system: target.channel } : row);
   if (!parsed.length) {
     throw new Error("지원되는 주문 열을 찾지 못했습니다. THKC 발주서 또는 주문 엑셀 양식을 확인해 주세요.");
   }
@@ -389,7 +409,7 @@ function parseXlsx(workbook: Workbook, filename: string, selectedSheet: string) 
   return parsed.map((row: Record<string, unknown>) => {
     // 일반 열 양식도 같은 센터 예외·원문 보존 규칙을 적용한다.
     const analysis = row.__destination_original === undefined && row.destination !== undefined ?
-      analyzeDestination(String(row.destination), /보필/.test(filename) ? "bofeel" : "eroum", { filename, memo: String(row.memo ?? "") }) : null;
+      analyzeDestination(String(row.destination), destinationVendor, { filename, memo: String(row.memo ?? "") }) : null;
     const center = centerOrderContext({ filename, memo: String(row.memo ?? "") });
     if (!analysis && row.__destination_original === undefined && !String(row.recipient_name ?? "").trim() && center.centerOrder) {
       row = { ...row, recipient_name: center.centerName, __recipient_source: center.recipientSource,
@@ -677,7 +697,7 @@ function buildCalendarDays(monthDate: Date, jobs: Job[]) {
   });
 }
 
-function OverviewPage({ jobs, onOpenJob, onOpenInventory }: { jobs: Job[]; onOpenJob: (id: string) => void; onOpenInventory: () => void }) {
+function OverviewPage({ jobs, onOpenJob, onOpenInventory, onSelectVendor }: { jobs: Job[]; onOpenJob: (id: string) => void; onOpenInventory: () => void; onSelectVendor: (key: string) => void }) {
   const steps = ["발주 접수", "데이터 검증", "운영자 승인", "주문 실행", "결과 확인", "명세서 검수", "입출고 등록"];
   const columns = [
     { title: "검토 필요", hint: "입력값과 예외를 확인하세요", color: "amber", statuses: ["HOLD", "FAILED"] },
@@ -686,6 +706,7 @@ function OverviewPage({ jobs, onOpenJob, onOpenInventory }: { jobs: Job[]; onOpe
   ];
   return (
     <div className="space-y-6">
+      <VendorBoardSection jobs={jobs} onSelect={onSelectVendor} />
       <section className="rounded-2xl border border-slate-200/70 bg-white px-5 py-6">
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 xl:grid-cols-7">
           {steps.map((step, index) => (
@@ -728,6 +749,234 @@ function OverviewPage({ jobs, onOpenJob, onOpenInventory }: { jobs: Job[]; onOpe
         {["이로움", "보필", "ERP 주문", "메일 주문"].map((channel) => <div key={channel} className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-600">{channel.slice(0, 1)}</span><div><p className="text-sm font-semibold">{channel}</p><p className="mt-1 text-xs text-slate-500">저장 작업 {jobs.filter((job) => job.sourceSystem === channel).length}개</p></div></div>)}
       </section>
     </div>
+  );
+}
+
+function boardName(entry: BoardEntry) {
+  const round = entry.round && entry.round !== entry.orderDeadline ? ` ${entry.round}` : "";
+  return `${entry.channel}${round}`;
+}
+
+function boardStatusClass(status: string) {
+  if (status === "DONE") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "IN_PROGRESS") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function methodIcon(kind: string | undefined) {
+  if (kind === "EMAIL") return <Mail className="h-3.5 w-3.5" />;
+  if (kind === "FAX") return <Printer className="h-3.5 w-3.5" />;
+  if (kind === "KAKAO") return <MessageCircle className="h-3.5 w-3.5" />;
+  if (kind === "ERP") return <Database className="h-3.5 w-3.5" />;
+  return <Globe className="h-3.5 w-3.5" />;
+}
+
+// 시간표 순서로 오늘의 업체 회차를 나열한다. 카드를 누르면 발주 형태별 창이 열린다.
+function VendorBoardSection({ jobs, onSelect }: { jobs: Job[]; onSelect: (key: string) => void }) {
+  const now = new Date();
+  const board = vendorBoard(jobs, now);
+  const summary = boardSummary(board);
+  const today = kstParts(now);
+  const times = [...new Set(board.map((item) => item.entry.orderDeadline ?? "마감 미정"))];
+  return (
+    <section aria-label="업체별 발주 현황" className="rounded-2xl border border-slate-200/70 bg-white p-5">
+      <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">오늘 업체별 발주</h2>
+          <p className="mt-1 text-sm text-slate-500">{today?.date} · 직배 시간표 순서 · 업체를 누르면 발주서를 올리고 발주 형태별 작업을 진행합니다.{today && [0, 6].includes(today.weekday) ? " 주말에는 시간표 발주가 없습니다." : ""}</p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs font-semibold">
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">발주 완료 {summary.done}/{summary.total}</span>
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-amber-700">진행 중 {summary.inProgress}</span>
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-slate-600">발주 전 {summary.before}</span>
+          {summary.overdue ? <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">마감 지남 {summary.overdue}</span> : null}
+        </div>
+      </div>
+      <div className="mt-4 space-y-4">
+        {times.map((time) => (
+          <div key={time} className="grid gap-3 sm:grid-cols-[64px_minmax(0,1fr)]">
+            <p className="pt-3 text-sm font-bold text-slate-700">{time}</p>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+              {board.filter((item) => (item.entry.orderDeadline ?? "마감 미정") === time).map((item) => (
+                <button key={item.key} type="button" aria-label={`${boardName(item.entry)} ${item.statusLabel}`} onClick={() => onSelect(item.key)} className={`group rounded-xl border bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${item.overdue ? "border-rose-200" : "border-slate-200/80"}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0"><span className="block truncate text-sm font-semibold">{boardName(item.entry)}</span>{item.entry.vendor !== item.entry.channel ? <span className="block text-[11px] text-slate-400">{item.entry.vendor}</span> : null}</span>
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${boardStatusClass(item.status)}`}>{item.statusLabel}</span>
+                  </div>
+                  <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">{methodIcon(item.action?.kind)}{item.action?.label ?? item.entry.method} · 접수 {item.entry.receiptDeadline ?? "미정"}</p>
+                  {item.jobs.length ? <p className="mt-1 text-[11px] text-slate-500">오늘 발주서 {item.jobs.length}개{item.waitingReview ? " · 서버 처리·검토 중" : ""}</p> : null}
+                  {item.overdue ? <p className="mt-1 text-[11px] font-semibold text-rose-600">발주마감 지남</p> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+async function downloadOrderSheet(entry: BoardEntry, rows: OrderRow[]) {
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("발주서");
+  worksheet.addRows([ORDER_SHEET_HEADERS, ...orderSheetRows(rows)]);
+  worksheet.columns.forEach((column) => { column.width = 22; });
+  const buffer = await workbook.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buffer as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${(kstParts(new Date())?.date ?? "").replaceAll("-", "")}_직배(${entry.vendor}) 발주서.xlsx`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function openPrintableOrder(entry: BoardEntry, rows: OrderRow[]) {
+  const url = URL.createObjectURL(new Blob([printableOrderHtml(entry, rows)], { type: "text/html;charset=utf-8" }));
+  window.open(url, "_blank", "noopener");
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const BUSY_JOB_STATUSES = ["QUEUED", "RUNNING", "AWAITING_REVIEW", "REVIEWED", "SUBMIT_QUEUED"];
+
+// 작업 한 건에 대한 발주 형태별 동작. 이 화면은 메일·팩스·카톡을 보내지 않는다.
+function VendorOrderActions({ job, loading, onNotice, onMarkDone, onUndoDone }: { job: Job; loading: boolean; onNotice: (text: string) => void; onMarkDone: (job: Job) => void; onUndoDone: (job: Job) => void }) {
+  const entry = entryForJob(job);
+  const action = entry ? vendorAction(entry) : null;
+  if (!entry || !action || !action.manualDone) return null;
+  const rows = job.rows ?? [];
+  const draft = orderDraft(entry, rows);
+  const done = jobOrderDone(job);
+  const unresolved = (job.holdRows ?? 0) + (job.failedRows ?? 0);
+  const copy = async (text: string, label: string) => onNotice(await copyText(text) ? `${label}을 복사했습니다.` : `${label} 복사에 실패했습니다. 칸에서 직접 복사해 주세요.`);
+  const mailto = `mailto:?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.text)}`;
+  const textOnly = action.warnings.some((warning) => warning.includes("텍스트"));
+  return (
+    <section aria-label={`${boardName(entry)} 발주 작업`} className="space-y-3 rounded-xl border border-slate-200 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold">{action.label}<span className="ml-2 text-xs font-normal text-slate-500">{job.totalRows}건{unresolved ? ` · 확인 필요 ${unresolved}행` : ""}</span></p>
+        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${boardStatusClass(done ? "DONE" : "IN_PROGRESS")}`}>{done ? BOARD_STATUS_LABEL.DONE : BOARD_STATUS_LABEL.IN_PROGRESS}</span>
+      </div>
+      {action.kind === "EMAIL" ? (
+        <div className="space-y-2">
+          <Input aria-label="메일 제목" readOnly value={draft.subject} />
+          <textarea aria-label="메일 본문" readOnly value={draft.text} className="h-40 w-full rounded-lg border border-slate-200 p-2 text-xs leading-5" />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => void copy(`${draft.subject}\n\n${draft.text}`, "메일 초안")}><Copy className="h-4 w-4" />메일 초안 복사</Button>
+            <Button variant="outline" disabled={mailto.length > 1900} onClick={() => { window.location.href = mailto; }}><Mail className="h-4 w-4" />메일 앱에서 초안 열기</Button>
+            <Button variant="outline" onClick={() => void downloadOrderSheet(entry, rows)}><Download className="h-4 w-4" />발주서 엑셀 내려받기</Button>
+          </div>
+          <p className="text-xs text-slate-500">받는 사람은 공개 저장소에 두지 않으므로 로컬 메모에서 확인해 넣습니다. 메일 앱은 초안만 열며 자동으로 보내지 않습니다.{mailto.length > 1900 ? " 본문이 길어 메일 앱 열기는 꺼져 있습니다. 복사해 붙여 넣으세요." : ""}</p>
+        </div>
+      ) : action.kind === "FAX" ? (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => openPrintableOrder(entry, rows)}><Printer className="h-4 w-4" />인쇄용 발주서 열기</Button>
+            <Button variant="outline" onClick={() => void downloadOrderSheet(entry, rows)}><Download className="h-4 w-4" />발주서 엑셀 내려받기</Button>
+          </div>
+          <p className="text-xs text-slate-500">팩스 번호는 로컬 메모에서 확인합니다. 인쇄 화면만 열며 팩스를 보내지 않습니다.</p>
+        </div>
+      ) : action.kind === "KAKAO" ? (
+        <div className="space-y-2">
+          <textarea aria-label="카톡 문구" readOnly value={draft.text} className="h-40 w-full rounded-lg border border-slate-200 p-2 text-xs leading-5" />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => void copy(draft.text, "카톡 문구")}><Copy className="h-4 w-4" />카톡 문구 복사</Button>
+            {textOnly ? null : <Button variant="outline" onClick={() => void downloadOrderSheet(entry, rows)}><Download className="h-4 w-4" />발주서 엑셀 내려받기</Button>}
+          </div>
+          <p className="text-xs text-slate-500">문구를 복사해 업체 {action.label === "카톡친구 발주" ? "친구 채팅" : "카톡방"}에 붙여 넣습니다. 이 화면은 카톡을 보내지 않습니다.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {action.url ? <Button variant="outline" onClick={() => window.open(action.url ?? "", "_blank", "noopener")}><ExternalLink className="h-4 w-4" />{action.kind === "ERP" ? "ERP 포털 열기" : "B2B몰 열기"}</Button> : null}
+            <Button variant="outline" onClick={() => void copy([ORDER_SHEET_HEADERS, ...orderSheetRows(rows)].map((cells) => cells.join("\t")).join("\n"), "입력값")}><Copy className="h-4 w-4" />입력값 복사</Button>
+            <Button variant="outline" onClick={() => void downloadOrderSheet(entry, rows)}><Download className="h-4 w-4" />발주서 엑셀 내려받기</Button>
+          </div>
+          <p className="text-xs text-slate-500">{action.kind === "ERP" ? "ERP 품목코드·거래처는 자동 확정하지 않습니다. 포털에서 품목·수량·납품처를 대조해 등록하세요." : "이 B2B몰은 아직 서버 자동 주문이 연결되지 않았습니다. 사이트에서 상품·옵션·신규 배송지를 직접 입력하세요."}</p>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+        {done ? (
+          <>
+            <p className="text-xs text-emerald-700">{job.vendorOrderDone?.doneAt ? `${formatDateTime(job.vendorOrderDone.doneAt)} ${job.vendorOrderDone.doneByName} 완료 표시` : "발주 완료"}</p>
+            {job.vendorOrderDone?.doneAt ? <Button variant="outline" size="sm" disabled={loading} onClick={() => onUndoDone(job)}><Undo2 className="h-4 w-4" />완료 표시 취소</Button> : null}
+          </>
+        ) : (
+          <AlertDialog>
+            <AlertDialogTrigger asChild><Button disabled={loading || BUSY_JOB_STATUSES.includes(job.status)}><CheckCircle2 className="h-4 w-4" />발주 완료 표시</Button></AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{boardName(entry)} 발주 완료로 표시할까요?</AlertDialogTitle>
+                <AlertDialogDescription>업체에 실제로 보낸 뒤에만 누르세요. 이 화면은 메일·팩스·카톡을 보내지 않고 완료 기록만 남깁니다.{unresolved ? ` 확인 필요 행 ${unresolved}개가 포함되어 있습니다.` : ""}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>취소</AlertDialogCancel>
+                <AlertDialogAction onClick={() => onMarkDone(job)}>발주 완료 표시</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function VendorOrderDialog({ item, loading, notice, onClose, onUpload, onOpenJob, onNotice, onMarkDone, onUndoDone }: {
+  item: BoardItem<Job> | null;
+  loading: boolean;
+  notice: string;
+  onClose: () => void;
+  onUpload: (entry: BoardEntry) => void;
+  onOpenJob: (id: string) => void;
+  onNotice: (text: string) => void;
+  onMarkDone: (job: Job) => void;
+  onUndoDone: (job: Job) => void;
+}) {
+  const entry = item?.entry;
+  const action = item?.action;
+  return (
+    <Dialog open={Boolean(item)} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl">
+        {item && entry ? (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex flex-wrap items-center gap-2">{boardName(entry)}<span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${boardStatusClass(item.status)}`}>{item.statusLabel}</span></DialogTitle>
+              <DialogDescription>{action?.label ?? entry.method} · 발주마감 {entry.orderDeadline ?? "미정"} · 접수마감 {entry.receiptDeadline ?? "미정"}{entry.vendor !== entry.channel ? ` · 시간표 표기 ${entry.vendor}` : ""}{entry.note ? ` · ${entry.note}` : ""}</DialogDescription>
+            </DialogHeader>
+            {action?.warnings.length ? <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{action.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
+            {item.overdue ? <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">발주마감({entry.orderDeadline})이 지났습니다. 업체 접수 가능 여부를 먼저 확인하세요.</p> : null}
+            <ol className="grid gap-2 sm:grid-cols-2">
+              {(action?.steps ?? []).map((step, index) => <li key={step} className="flex gap-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[11px] font-semibold text-emerald-800">{index + 1}</span>{step}</li>)}
+            </ol>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => onUpload(entry)} disabled={loading}><Upload className="h-4 w-4" />{entry.channel} 발주서 업로드</Button>
+              {(action?.kind === "B2B_MANUAL" || action?.kind === "ERP") && action.url ? <Button variant="outline" onClick={() => window.open(action.url ?? "", "_blank", "noopener")}><ExternalLink className="h-4 w-4" />{action.kind === "ERP" ? "ERP 포털 열기" : "B2B몰 열기"}</Button> : null}
+            </div>
+            <p className="text-xs text-slate-500">{action?.kind === "B2B_AUTO" ? "업로드하면 주문 관리 화면에서 시트 확인·저장 후 서버 준비 요청을 진행합니다. 실제 제출은 검토와 최종 승인 뒤에만 실행됩니다." : "업로드하면 주문 관리 화면에서 시트 확인·저장한 뒤, 이 창이나 주문 상세에서 발주 형태에 맞는 초안을 만들고 보낸 뒤 완료 표시합니다."}</p>
+            {notice ? <p className="rounded-lg bg-[#fff8e6] px-3 py-2 text-sm text-slate-800">{notice}</p> : null}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold">오늘 올린 발주서 {item.jobs.length}개</h3>
+              {item.jobs.length ? item.jobs.map((job) => (
+                <div key={job.id} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-sm"><span className="min-w-0 truncate font-medium">{job.filename}</span><Badge className={statusClass(job.status)}>{statusLabel(job.status)}</Badge></div>
+                  {action?.manualDone ? <VendorOrderActions job={job} loading={loading} onNotice={onNotice} onMarkDone={onMarkDone} onUndoDone={onUndoDone} /> : null}
+                  <Button variant="ghost" size="sm" onClick={() => onOpenJob(job.id)}>주문 관리에서 열기<ArrowRight className="h-4 w-4" /></Button>
+                </div>
+              )) : <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">아직 올린 발주서가 없습니다.</p>}
+            </div>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -775,6 +1024,8 @@ function OverviewCard({ label, value }: { label: string; value: number }) {
 
 export default function OrderOpsApp() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const vendorInputRef = useRef<HTMLInputElement>(null);
+  const pendingVendorTarget = useRef<UploadTarget | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [previewRows, setPreviewRows] = useState<OrderRow[]>([]);
@@ -792,6 +1043,9 @@ export default function OrderOpsApp() {
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [jobSearch, setJobSearch] = useState("");
   const [jobFilter, setJobFilter] = useState("all");
+  const [uploadTarget, setUploadTarget] = useState<UploadTarget | null>(null);
+  const [vendorDialogKey, setVendorDialogKey] = useState<string | null>(null);
+  const [vendorNotice, setVendorNotice] = useState("");
   const partsJobs = jobs.filter(job => job.orderKind === PARTS_ORDER_KIND);
   const visibleJobs = jobs.filter((job) => {
     if (job.orderKind === PARTS_ORDER_KIND) return false;
@@ -832,6 +1086,7 @@ export default function OrderOpsApp() {
     }
     setActiveJob(data);
     hasUpload.current = false;
+    setUploadTarget(null);
     setUploadWorkbook(null);
     setSourceWorkbook(null);
     setSelectedSheet("");
@@ -860,11 +1115,12 @@ export default function OrderOpsApp() {
     }
   }
 
-  async function handleFile(file: File) {
+  async function handleFile(file: File, target: UploadTarget | null = null) {
     const generation = ++uploadGeneration.current;
     hasUpload.current = true;
     setViewMode("orders");
     setMessage("");
+    setUploadTarget(target);
     setFilename(file.name);
     setActiveJob(null);
     setPreviewRows([]);
@@ -879,6 +1135,11 @@ export default function OrderOpsApp() {
       setMessage("엑셀 파일은 10MB 이하로 올려주세요.");
       return;
     }
+    const targetProblem = uploadTargetProblem(target, file.name);
+    if (targetProblem) {
+      setMessage(targetProblem);
+      return;
+    }
     try {
       const workbook = await loadXlsx(file);
       if (generation !== uploadGeneration.current) return;
@@ -890,7 +1151,7 @@ export default function OrderOpsApp() {
       if (visible.length > 1) {
         setMessage("시트가 여러 개여서 보류했습니다. 아래 목록을 확인하고 처리할 시트 하나를 선택해 주세요.");
       } else {
-        selectUploadSheet(workbook, file.name, visible[0].name);
+        selectUploadSheet(workbook, file.name, visible[0].name, target);
       }
     } catch (error) {
       if (generation !== uploadGeneration.current) return;
@@ -898,14 +1159,14 @@ export default function OrderOpsApp() {
     }
   }
 
-  function selectUploadSheet(workbook: Workbook, name: string, sheet: string) {
+  function selectUploadSheet(workbook: Workbook, name: string, sheet: string, target: UploadTarget | null) {
     setSelectedSheet(sheet);
     setPreviewRows([]);
     if (!sheet) { setMessage("처리할 시트를 선택해 주세요."); return; }
     try {
-      const parsed = parseXlsx(workbook, name, sheet).map(validateOrder);
+      const parsed = parseXlsx(workbook, name, sheet, target).map(validateOrder);
       setPreviewRows(parsed);
-      setMessage(`${sheet} 시트에서 ${parsed.length}건을 읽었습니다. 선택한 시트만 저장합니다.`);
+      setMessage(`${target ? `${target.channel} 발주서로 ` : ""}${sheet} 시트에서 ${parsed.length}건을 읽었습니다. 선택한 시트만 저장합니다.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "선택한 시트를 읽지 못했습니다.");
     }
@@ -926,9 +1187,10 @@ export default function OrderOpsApp() {
         job = await createOrderJob({
           filename,
           orderKind: parts ? PARTS_ORDER_KIND : "STANDARD",
+          scheduleKey: parts ? null : uploadTarget?.key ?? null,
           selectedSheet,
           sourceWorkbook,
-          sourceSystem: parts ? PARTS_ORDER_LABEL : batch[0]?.sourceSystem || "미지정",
+          sourceSystem: parts ? PARTS_ORDER_LABEL : uploadTarget?.channel || batch[0]?.sourceSystem || "미지정",
           status: failedRows ? "FAILED" : holdRows ? "HOLD" : "READY",
           totalRows: batch.length,
           readyRows,
@@ -944,7 +1206,7 @@ export default function OrderOpsApp() {
           auditLogs: [{ id: `${Date.now()}-created`, jobId: "", action: "ORDER_CREATED", actorName: "주문 운영자", actorEmail: "", detail: `${filename} 주문 ${batch.length}건 접수`, createdAt: now }],
         });
       }
-      setMessage("클라우드 작업으로 저장했습니다.");
+      setMessage(uploadTarget && vendorAction(uploadTarget.channel)?.manualDone ? `클라우드 작업으로 저장했습니다. 아래 ${vendorAction(uploadTarget.channel)?.label} 작업에서 초안을 만들고, 업체에 보낸 뒤 발주 완료로 표시하세요.` : "클라우드 작업으로 저장했습니다.");
       setPreviewRows([]);
       await loadJobs();
       if (job) await openJob(String(job.id));
@@ -958,6 +1220,8 @@ export default function OrderOpsApp() {
   async function queueExecution(reserve = false) {
     if (!activeJob) return;
     if (isPartsOrder(activeJob)) { setMessage(`${PARTS_ORDER_LABEL}: 자동 준비·제출 대상이 아닙니다.`); return; }
+    const manualAction = vendorAction(entryForJob(activeJob) ?? normalizeChannelName(activeJob.sourceSystem));
+    if (manualAction && !manualAction.serverPrepare) { setMessage(`${manualAction.label} 업체는 서버 자동 준비 대상이 아닙니다. 발주 형태별 작업에서 진행해 주세요.`); return; }
     const problem = workbookProblem(activeJob);
     if (problem) { setMessage(problem); return; }
     setLoading(true);
@@ -1070,6 +1334,40 @@ export default function OrderOpsApp() {
     }
   }
 
+  function openVendorUpload(entry: BoardEntry) {
+    pendingVendorTarget.current = { key: entry.key, channel: entry.channel, vendor: entry.vendor, method: entry.method };
+    setVendorDialogKey(null);
+    vendorInputRef.current?.click();
+  }
+
+  async function markVendorOrderDone(job: Job) {
+    setLoading(true);
+    try {
+      await updateOrderJob(job.id, manualDonePatch(job, new Date()));
+      setVendorNotice(`${job.filename}: 발주 완료로 표시했습니다.`);
+      await loadJobs(true);
+      if (activeJob?.id === job.id) await openJob(job.id);
+    } catch (error) {
+      setVendorNotice(error instanceof Error ? error.message : "완료 표시 저장 오류");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function undoVendorOrderDone(job: Job) {
+    setLoading(true);
+    try {
+      await updateOrderJob(job.id, manualDoneUndoPatch(job, new Date()));
+      setVendorNotice(`${job.filename}: 완료 표시를 취소했습니다.`);
+      await loadJobs(true);
+      if (activeJob?.id === job.id) await openJob(job.id);
+    } catch (error) {
+      setVendorNotice(error instanceof Error ? error.message : "완료 표시 취소 오류");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadJobs(), 0);
     return () => window.clearTimeout(timeout);
@@ -1084,6 +1382,9 @@ export default function OrderOpsApp() {
 
   const currentTitle = activeJob ? `${activeJob.orderKind === PARTS_ORDER_KIND ? PARTS_ORDER_LABEL + ' · ' : ''}${activeJob.filename}` : filename || "새 주문 파일";
   const sheetProblem = workbookProblem(activeJob ?? { filename, selectedSheet, sourceWorkbook, rows: previewRows });
+  const activeAction = activeJob ? vendorAction(entryForJob(activeJob) ?? normalizeChannelName(activeJob.sourceSystem)) : null;
+  const serverPrepareBlocked = Boolean(activeAction && !activeAction.serverPrepare);
+  const vendorDialogItem = vendorDialogKey ? vendorBoard(jobs).find((item) => item.key === vendorDialogKey) ?? null : null;
   const duplicateFiles = duplicateOrderFiles(activeJob ?? { filename, sourceSystem: previewRows[0]?.sourceSystem }, jobs);
 
   return (
@@ -1125,6 +1426,20 @@ export default function OrderOpsApp() {
                 event.currentTarget.value = "";
               }}
             />
+            <input
+              ref={vendorInputRef}
+              className="hidden"
+              type="file"
+              aria-label="업체 발주서 업로드"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                const target = pendingVendorTarget.current;
+                pendingVendorTarget.current = null;
+                if (file && target) void handleFile(file, target);
+                event.currentTarget.value = "";
+              }}
+            />
           </div>
         </header>
 
@@ -1138,7 +1453,7 @@ export default function OrderOpsApp() {
             </section> : null}
 
         {viewMode === "overview" ? (
-          <OverviewPage jobs={jobs} onOpenJob={(id) => { setViewMode("orders"); void openJob(id); }} onOpenInventory={() => setViewMode("inventory")} />
+          <OverviewPage jobs={jobs} onOpenJob={(id) => { setViewMode("orders"); void openJob(id); }} onOpenInventory={() => setViewMode("inventory")} onSelectVendor={(key) => { setVendorNotice(""); setVendorDialogKey(key); }} />
         ) : viewMode === "inventory" ? (
           <InventoryRegistrationPage />
         ) : viewMode === "calendar" ? (
@@ -1205,8 +1520,8 @@ export default function OrderOpsApp() {
                     클라우드 저장
                   </Button>
                 ) : (
-                  <><Button variant="outline" onClick={() => void queueExecution(true)} disabled={isPartsOrder(activeJob) || Boolean(sheetProblem) || process.env.NEXT_PUBLIC_ENABLE_ORDER_PREPARATION_SCHEDULING !== "true" || !activeJob || !nextPreparation(activeJob.sourceSystem) || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>시간표로 준비 예약 (기본 꺼짐)</Button>
-                  <Button onClick={() => void queueExecution()} disabled={isPartsOrder(activeJob) || Boolean(sheetProblem) || !activeJob || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>
+                  <><Button variant="outline" onClick={() => void queueExecution(true)} disabled={isPartsOrder(activeJob) || serverPrepareBlocked || Boolean(sheetProblem) || process.env.NEXT_PUBLIC_ENABLE_ORDER_PREPARATION_SCHEDULING !== "true" || !activeJob || !nextPreparation(activeJob.sourceSystem) || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>시간표로 준비 예약 (기본 꺼짐)</Button>
+                  <Button onClick={() => void queueExecution()} disabled={isPartsOrder(activeJob) || serverPrepareBlocked || Boolean(sheetProblem) || !activeJob || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status) || loading}>
                     <PlayCircle className="h-4 w-4" />
                     서버 준비 요청
                   </Button></>
@@ -1214,10 +1529,12 @@ export default function OrderOpsApp() {
               </div>
             </div>
 
-            {!activeJob && sourceWorkbook ? <WorkbookSheetPicker source={sourceWorkbook} selectedSheet={selectedSheet} disabled={loading} onSelect={(sheet) => { if (uploadWorkbook && !loading) selectUploadSheet(uploadWorkbook, filename, sheet); }} /> : null}
+            {!activeJob && sourceWorkbook ? <WorkbookSheetPicker source={sourceWorkbook} selectedSheet={selectedSheet} disabled={loading} onSelect={(sheet) => { if (uploadWorkbook && !loading) selectUploadSheet(uploadWorkbook, filename, sheet, uploadTarget); }} /> : null}
             {activeJob ? <div className="border-b border-slate-200 px-4 py-3 text-sm">처리 시트: {activeJob.selectedSheet || "미선택"}{activeJob.sourceWorkbook?.sheets.some(sheet => sheet.state !== "visible") ? " · 숨김 시트 있음 (처리 제외)" : ""}{sheetProblem ? <p role="alert" className="mt-2 text-amber-800">{sheetProblem}</p> : null}</div> : null}
             {duplicateFiles.length ? <div role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">같은 날짜·같은 업체의 발주서가 이미 {duplicateFiles.length}개 있습니다. 수정본·추가본인지 확인해 주세요. 자동 차단하지 않습니다.<ul className="mt-2 list-inside list-disc">{duplicateFiles.map((job) => <li key={job.id}>{job.filename}</li>)}</ul></div> : null}
 
+            {!activeJob && uploadTarget ? <p className="border-b border-slate-200 bg-emerald-50/60 px-4 py-3 text-sm text-emerald-900">업체 카드에서 올린 발주서: {uploadTarget.channel} · {vendorAction(uploadTarget.channel)?.label ?? uploadTarget.method} · 저장하면 이 업체 회차의 오늘 발주로 표시됩니다.</p> : null}
+            {activeJob && activeAction?.manualDone ? <div className="border-b border-slate-200 p-4">{vendorNotice ? <p className="mb-3 rounded-lg bg-[#fff8e6] px-3 py-2 text-sm text-slate-800">{vendorNotice}</p> : null}<VendorOrderActions job={activeJob} loading={loading} onNotice={setVendorNotice} onMarkDone={(job) => void markVendorOrderDone(job)} onUndoDone={(job) => void undoVendorOrderDone(job)} /></div> : null}
             {activeJob?.scheduledPreparation ? <p className="border-b border-slate-200 px-4 py-3 text-sm text-slate-600">준비 예약: {formatDateTime(activeJob.scheduledPreparation.runAt)} · 접수마감: {formatDateTime(activeJob.scheduledPreparation.receiptDeadlineAt)} · 실제 제출은 검토·최종 승인 후 실행</p> : null}
             {message ? <div className="border-b border-slate-200 bg-[#fff8e6] px-4 py-3 text-sm text-slate-800">{message}</div> : null}
 
@@ -1276,6 +1593,17 @@ export default function OrderOpsApp() {
           </div>
         </div>
       </div>
+      <VendorOrderDialog
+        item={vendorDialogItem}
+        loading={loading}
+        notice={vendorNotice}
+        onClose={() => setVendorDialogKey(null)}
+        onUpload={openVendorUpload}
+        onOpenJob={(id) => { setVendorDialogKey(null); setViewMode("orders"); void openJob(id); }}
+        onNotice={setVendorNotice}
+        onMarkDone={(job) => void markVendorOrderDone(job)}
+        onUndoDone={(job) => void undoVendorOrderDone(job)}
+      />
     </main>
   );
 }

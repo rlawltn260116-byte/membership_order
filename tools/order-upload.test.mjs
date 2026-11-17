@@ -16,6 +16,7 @@ import { PassThrough, Writable } from 'node:stream';
 import ExcelJS from 'exceljs';
 import * as policy from '../worker/order-runner/workbook-policy.mjs';
 import * as schedule from '../worker/order-runner/schedule.mjs';
+import * as vendorBoardModule from '../worker/order-runner/vendor-board.mjs';
 import { splitDestination, analyzeDestination, centerOrderContext, DESTINATION_HOLD_REASON } from '../worker/order-runner/b2b-destination.mjs';
 import { submissionContent } from '../worker/order-runner/order-approval.mjs';
 import * as classification from '../worker/order-runner/order-classification.mjs';
@@ -32,7 +33,7 @@ async function screen() {
     if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
     return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }];
   };
-  const context = { React, ExcelJS, console, window: { crypto: webcrypto }, TextEncoder, process: { env: {} }, ...policy, ...schedule, ...classification, splitDestination, analyzeDestination, centerOrderContext, DESTINATION_HOLD_REASON, submissionContent,
+  const context = { React, ExcelJS, console, window: { crypto: webcrypto }, TextEncoder, process: { env: {} }, ...policy, ...schedule, ...vendorBoardModule, ...classification, splitDestination, analyzeDestination, centerOrderContext, DESTINATION_HOLD_REASON, submissionContent,
     useState: state, useRef: initial => state(() => ({ current: initial }))[0], useMemo: fn => fn(), useEffect: () => {},
     createOrderJob: async value => { const job = { ...value, id: saved.length ? `saved-${saved.length + 1}` : 'saved' }; saved.push(job); return job; },
     listOrderJobs: async () => saved,
@@ -52,7 +53,7 @@ async function screen() {
   let snippet = ast.statements.filter(node => !ts.isImportDeclaration(node)).map(node => node.getText(ast)).join('\n').replaceAll('\r\n', '\n');
   snippet = snippet.replace('export default function OrderOpsApp', 'function OrderOpsApp')
     .replace('const ExcelJS = (await import("exceljs")).default;', '')
-    .replace('  return (\n    <main', '  globalThis.screenActions = { handleFile, saveJob, queueExecution, openJob, loadJobs, reviewWorkerResult, queueFinalSubmission };\n  return (\n    <main');
+    .replace('  return (\n    <main', '  globalThis.screenActions = { handleFile, saveJob, queueExecution, openJob, loadJobs, reviewWorkerResult, queueFinalSubmission, markVendorOrderDone, undoVendorOrderDone };\n  return (\n    <main');
   vm.createContext(context);
   vm.runInContext(ts.transpileModule(snippet, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText, context);
   const render = () => { cursor = 0; return context.OrderOpsApp(); };
@@ -411,4 +412,74 @@ test('제출 응답 유실·시간 초과·비정상 종료는 실제 워커 저
     await worker.run();
     assert.equal(sends, mode === 'before-submit' ? 0 : 1);
   }
+});
+
+async function vendorFile(name) {
+  const book = new ExcelJS.Workbook();
+  book.addWorksheet('발주').addRows([
+    ['주문번호', '납품처', '납품처전화번호', '품명', '주문수량', '비고(내역)'],
+    ['TEST', '가상시 모의로 1_모의인', '01000000000', 'BFSH10', 1, '모의 비고']]);
+  return new File([await book.xlsx.writeBuffer()], name);
+}
+const vendorTarget = channel => {
+  const entry = vendorBoardModule.boardEntries.find(item => item.channel === channel);
+  return { key: entry.key, channel: entry.channel, vendor: entry.vendor, method: entry.method };
+};
+
+test('업체 카드로 올린 카톡 업체 발주서는 그 업체·회차로 저장되고 서버 준비 없이 사람 완료 표시로 현황판에 반영된다', async () => {
+  const app = await screen(); app.render();
+  const target = vendorTarget('선인케어');
+  await app.context.screenActions.handleFile(await vendorFile('20261117_직배(선인케어) 모의.xlsx'), target);
+  app.render();
+  await app.context.screenActions.saveJob();
+  assert.equal(app.saved.length, 1);
+  const job = app.saved[0];
+  assert.equal(job.sourceSystem, '선인케어');
+  assert.equal(job.scheduleKey, target.key);
+  assert.equal(job.rows[0].sourceSystem, '선인케어');
+  assert.equal(job.rows[0].memo, '모의 비고');
+  let tree = app.render();
+  assert.equal(app.button(tree, '서버 준비 요청').props.disabled, true);
+  await app.context.screenActions.queueExecution();
+  assert.equal(app.writes.length, 0);
+  const before = vendorBoardModule.vendorBoard(app.saved).find(item => item.key === target.key);
+  assert.equal(before.statusLabel, '진행 중');
+  const actions = renderToStaticMarkup(React.createElement(app.context.VendorOrderActions, { job, loading: false, onNotice() {}, onMarkDone() {}, onUndoDone() {} }));
+  assert.ok(actions.includes('aria-label="카톡 문구"'));
+  assert.ok(actions.includes('비고: 모의 비고'));
+  await app.context.screenActions.markVendorOrderDone(job);
+  assert.equal(app.writes.length, 1);
+  assert.equal(app.writes[0][1].status, 'COMPLETED');
+  assert.equal(app.writes[0][1].vendorOrderDone.previousStatus, 'READY');
+  const done = vendorBoardModule.vendorBoard(app.saved).find(item => item.key === target.key);
+  assert.equal(done.statusLabel, '발주 완료');
+  const overview = renderToStaticMarkup(React.createElement(app.context.OverviewPage, { jobs: app.saved, onOpenJob() {}, onOpenInventory() {}, onSelectVendor() {} }));
+  assert.ok(overview.includes('aria-label="업체별 발주 현황"'));
+  assert.ok(overview.includes('aria-label="선인케어 발주 완료"'));
+  assert.ok(overview.includes('aria-label="보필 발주 전"'));
+  assert.ok(overview.indexOf('보필 발주 전') < overview.indexOf('선인케어 발주 완료'));
+  await app.context.screenActions.undoVendorOrderDone(app.saved[0]);
+  assert.equal(app.writes[1][1].status, 'READY');
+  assert.equal(vendorBoardModule.vendorBoard(app.saved).find(item => item.key === target.key).statusLabel, '진행 중');
+});
+
+test('업체 카드와 파일명의 업체가 다르면 미리보기·저장을 막고, 보필 카드는 파일명과 무관하게 보필 규칙과 서버 준비를 쓴다', async () => {
+  const app = await screen(); app.render();
+  await app.context.screenActions.handleFile(await vendorFile('20261117_직배(보필) 모의.xlsx'), vendorTarget('선인케어'));
+  app.render();
+  await app.context.screenActions.saveJob();
+  assert.equal(app.saved.length, 0);
+
+  const bofeel = await screen(); bofeel.render();
+  await bofeel.context.screenActions.handleFile(await vendorFile('20261117_직배 모의.xlsx'), vendorTarget('보필'));
+  bofeel.render();
+  await bofeel.context.screenActions.saveJob();
+  assert.equal(bofeel.saved.length, 1);
+  assert.equal(bofeel.saved[0].sourceSystem, '보필');
+  assert.equal(bofeel.saved[0].rows[0].customerName, '보필');
+  assert.equal(bofeel.saved[0].scheduleKey, '보필|09:00');
+  const tree = bofeel.render();
+  assert.equal(bofeel.button(tree, '서버 준비 요청').props.disabled, false);
+  await bofeel.context.screenActions.markVendorOrderDone(bofeel.saved[0]);
+  assert.equal(bofeel.writes.length, 0);
 });
