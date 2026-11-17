@@ -255,6 +255,23 @@ def emit(value):
 
 
 def workbook_problem(group):
+    center = [row for row in group.get('rows', []) if row.get('centerQueueId')]
+    ordinary = [row for row in group.get('rows', []) if not row.get('centerQueueId')]
+    if center:
+        if len({row.get('lineNo') for row in group['rows']}) != len(group['rows']):
+            return '작업 행 번호가 중복되어 있습니다.'
+        for row in center:
+            if type(row.get('sourceLineNo')) is not int or row['sourceLineNo'] < 1 or not re.fullmatch(r'20\d{6}', str(row.get('sourceDate', ''))):
+                return '센터 행의 원본 날짜·행 정보가 없습니다.'
+            original = dict(row)
+            original.pop('centerQueueId')
+            problem = workbook_problem({'filename': row.get('sourceFile'), 'selectedSheet': row.get('selectedSheet'),
+                                        'sourceWorkbook': row.get('sourceWorkbook'), 'rows': [original]})
+            if problem:
+                return problem
+        if not ordinary:
+            return None
+        group = dict(group, rows=ordinary)
     source = group.get('sourceWorkbook')
     if not isinstance(source, dict) or not isinstance(group.get('filename'), str) or not group['filename'] or source.get('filename') != group['filename']:
         return '파일의 시트 정보가 없거나 파일명이 다릅니다. 다시 업로드해 주세요.'

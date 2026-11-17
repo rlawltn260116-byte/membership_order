@@ -10,7 +10,10 @@ export function submissionContent(job) {
     const postcodeEvidence = row.postcodeSearchResponse === undefined ? null : [String(data?.codeData?.code ?? ""),
       (Array.isArray(data?.addressData) ? data.addressData : [])
         .map(item => [item?.roadAddress, item?.groundAddress, item?.zoneCode].map(value => String(value ?? "")))];
-    return [[...fields, "sourceFile", "sourceDate", "sourceSheet"].map(key => String(row[key] ?? "")), postcodeEvidence];
+    const source = row.sourceWorkbook;
+    const centerSource = row.centerQueueId ? [String(row.centerQueueId), String(row.sourceLineNo ?? ''), String(row.selectedSheet ?? ''),
+      String(source?.filename ?? ''), (source?.sheets || []).map(sheet => [String(sheet?.name ?? ''), String(sheet?.state ?? '')])] : null;
+    return [[...fields, "sourceFile", "sourceDate", "sourceSheet"].map(key => String(row[key] ?? "")), postcodeEvidence, ...(centerSource ? [centerSource] : [])];
   });
   return JSON.stringify([String(job.sourceSystem ?? ""), String(job.filename ?? job.sourceFile ?? ""), String(job.sourceDate ?? ""),
     String(job.selectedSheet ?? ""), String(job.sourceWorkbook?.filename ?? ""), sheets, rows]);

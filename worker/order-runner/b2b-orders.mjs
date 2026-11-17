@@ -94,6 +94,7 @@ export function normalizeRow(row, job, index) {
     }
   }
   const lineNo = row.lineNo ?? index + 1;
+  const sourceLineNo = row.centerQueueId ? row.sourceLineNo : lineNo;
   const quantity = String(row.quantity ?? row["주문수량"] ?? "").trim();
   const orderId = norm(row.orderId ?? row["주문번호"]);
   let reason = "";
@@ -118,10 +119,10 @@ export function normalizeRow(row, job, index) {
   const date = norm(row.sourceDate ?? job.sourceDate) || /(?:^|\D)(20\d{6})(?:\D|$)/.exec(file)?.[1] || "";
   if (!file || !/^20\d{6}$/.test(date)) reason ||= "중복 방지에 필요한 원본 파일명·날짜가 없습니다.";
   // 주문번호는 참고값이다. 수정본 접미어를 제거한 파일 계열과 원본 행 내용을 메모리에서 해시한다.
-  const sourceKey = createHash("sha256").update(JSON.stringify(["source-row-v2", vendor, file, date, lineNo,
+  const sourceKey = createHash("sha256").update(JSON.stringify(["source-row-v2", vendor, file, date, sourceLineNo,
     name, address, detail, phone, mapped.model ?? norm(row.productName ?? row["품명"]), mapped.optionId ?? norm(row.option), Number(quantity)])).digest("hex");
   const destinationSourceKey = createHash("sha256").update(JSON.stringify([vendor, name, originalAddress, norm(row.addressDetail), phone])).digest("hex");
-  return { lineNo, sourceSheet: row.sourceSheet, vendor, orderId, quantity: Number(quantity), expectedPrice: row.expectedPrice ?? "", recipient, sourceKey, destinationSourceKey, mapping: mapped, postcodeDecision,
+  return { lineNo, sourceSheet: row.sourceSheet, ...(row.centerQueueId ? { centerQueueId: row.centerQueueId, sourceLineNo, sourceFile: row.sourceFile, sourceDate: row.sourceDate, selectedSheet: row.selectedSheet, sourceWorkbook: row.sourceWorkbook } : {}), vendor, orderId, quantity: Number(quantity), expectedPrice: row.expectedPrice ?? "", recipient, sourceKey, destinationSourceKey, mapping: mapped, postcodeDecision,
     ...classification, ...center, recipientSource: row.recipientSource || analysis?.recipientSource || (row.recipientName ? "기존 수취인" : center.recipientSource),
     ...(analysis ? { destination: analysis.originalDestination, normalizationNotes: analysis.normalizationNotes } : {}),
     status: reason ? "HOLD" : "READY", reason, reviewNotes: [...(mapped.reviewNotes ?? []), ...(postcodeReason ? [postcodeReason] : [])] };

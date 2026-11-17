@@ -9,10 +9,16 @@ import { submissionContent } from "../order-approval.mjs";
 import { workbookProblem, type SourceWorkbook } from "../workbook-policy.mjs";
 import { isPartsOrder, PARTS_ORDER_LABEL } from "../order-classification.mjs";
 import { centerOrderContext, SITE_RECIPIENT_REQUIRED_REASON } from "../b2b-destination.mjs";
+import { centerReservationProblem, updateJobWithCenters, type CenterRoot } from "../center-queue.mjs";
 
 type RowStatus = "READY" | "HOLD" | "FAILED";
 
 type OrderRow = {
+  centerQueueId?: string;
+  sourceLineNo?: number;
+  sourceDate?: string;
+  selectedSheet?: string;
+  sourceWorkbook?: SourceWorkbook;
   sourceFile?: string;
   orderKind?: string;
   sourceSheet?: string;
@@ -143,20 +149,44 @@ const now = () => new Date().toISOString();
 
 async function claimJob(jobId: string, canClaim: (job: OrderJob) => boolean = () => true): Promise<OrderJob | null> {
   let claimed: OrderJob | null = null;
-  const result = await database.ref(`${queuePath}/${jobId}`).transaction((value) => {
+  const result = await database.ref(queuePath.split('/').slice(0, -1).join('/')).transaction((value) => {
     // First invocation may see an empty local cache (null). Returning null makes
     // Firebase retry with the real server value instead of aborting the claim.
     if (value === null) return value;
-    const current = value as OrderJob | null;
+    const root = value as CenterRoot & { jobs?: Record<string, OrderJob> };
+    const current = root.jobs?.[jobId];
     if (!current || !["QUEUED", "SUBMIT_QUEUED"].includes(current.status ?? "")) return;
     if (!canClaim(current)) return;
+    if (centerReservationProblem(root, { ...current, id: jobId })) return;
     if (current.scheduledPreparation && process.env.ENABLE_ORDER_PREPARATION_SCHEDULING !== "true") return;
     if (current.status === "QUEUED" && !preparationDue(current, new Date(), process.env.ENABLE_ORDER_PREPARATION_SCHEDULING === "true")) return;
     const executionMode: ExecutionMode = current.status === "SUBMIT_QUEUED" ? "SUBMIT" : "PREPARE";
     claimed = { ...current, id: jobId, status: "RUNNING", claimedFromStatus: current.status, executionMode };
-    return claimed;
+    root.jobs![jobId] = claimed;
+    return root;
   }, undefined, false);
   return result.committed ? claimed : null;
+}
+
+async function saveWorkerResult(jobId: string, patch: Record<string, unknown>) {
+  const savedAt = now();
+  let transactionError: unknown;
+  let applied = false;
+  const result = await database.ref(queuePath.split('/').slice(0, -1).join('/')).transaction(value => {
+    transactionError = undefined;
+    applied = false;
+    if (value === null) return value;
+    try {
+      const next = updateJobWithCenters(value as CenterRoot, jobId, patch, savedAt, true);
+      applied = true;
+      return next;
+    } catch (error) {
+      transactionError = error;
+      return undefined;
+    }
+  }, undefined, false);
+  if (transactionError) throw transactionError;
+  if (!result.committed || !applied) throw new Error('작업 결과 트랜잭션이 적용되지 않았습니다. 예약 상태를 확인해 주세요.');
 }
 
 const colorAliases: Record<string, string[]> = {
@@ -740,7 +770,7 @@ async function runOnce() {
         const completed = submitMode && report.submittedRows === report.totalRows && report.failedRows === 0 && report.holdRows === 0;
         const nextStatus = report.failedRows || report.holdRows ? "HOLD" : completed ? "COMPLETED" : "AWAITING_REVIEW";
         const auditKey = database.ref(`${queuePath}/${jobId}/auditLogs`).push().key ?? randomUUID();
-        await database.ref(`${queuePath}/${jobId}`).update({
+        await saveWorkerResult(jobId, {
           status: nextStatus,
           updatedAt: report.finishedAt,
           workerId,
@@ -770,7 +800,7 @@ async function runOnce() {
         console.log(`Finished job ${jobId}: success=${report.successRows} failed=${report.failedRows} hold=${report.holdRows}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "알 수 없는 워커 오류";
-        await database.ref(`${queuePath}/${jobId}`).update({ status: "FAILED", updatedAt: now(), workerId, error: message });
+        await saveWorkerResult(jobId, { status: "FAILED", updatedAt: now(), workerId, error: message });
       }
     }
   } finally {

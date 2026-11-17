@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from http_cart import CartRow, CartSnapshot, OrderDraft, values
 from http_login_draft import LoginError, StopSignalError
-from http_queue import QueueSession, cleanup_bofeel, prepare_eroum_group, prepare_bofeel_group, run
+from http_queue import QueueSession, cleanup_bofeel, prepare_eroum_group, prepare_bofeel_group, run, workbook_problem
 
 
 def row(vendor='eroum', line=1, quantity=1, memo=''):
@@ -80,6 +80,27 @@ class FakeBofeel:
 
 
 class QueueTests(unittest.TestCase):
+    def test_merged_center_rows_keep_each_selected_workbook_and_original_line(self):
+        from copy import deepcopy
+        ordinary = group('bofeel')
+        center = row('bofeel', line=2)
+        center.update(centerQueueId='mock-center', sourceFile='20261116_모의센터.xlsx', sourceDate='20261116',
+                      sourceLineNo=1, sourceSheet='센터', selectedSheet='센터',
+                      sourceWorkbook={'filename': '20261116_모의센터.xlsx', 'sheets': [{'name': '센터', 'state': 'visible'}]})
+        ordinary['rows'].append(center)
+        self.assertIsNone(workbook_problem(ordinary))
+        for key, value in [('sourceFile', '다른파일.xlsx'), ('selectedSheet', '없는시트'), ('sourceLineNo', 0), ('sourceDate', '')]:
+            changed = deepcopy(ordinary)
+            changed['rows'][1][key] = value
+            self.assertIsNotNone(workbook_problem(changed))
+            factory = Mock(side_effect=AssertionError('원본 출처 불일치 외부 요청 금지'))
+            with patch('sys.stdout', io.StringIO()) as output:
+                run('bofeel', [changed], {'ENABLE_B2B_HTTP_CART': 'true'}, session_factory=factory)
+            factory.assert_not_called()
+            self.assertIn('HOLD', output.getvalue())
+        center_only = dict(ordinary, rows=[center])
+        self.assertIsNone(workbook_problem(center_only))
+
     def test_sheet_provenance_is_held_before_login_or_session_creation(self):
         from copy import deepcopy
         valid = group('bofeel')

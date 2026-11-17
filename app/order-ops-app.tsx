@@ -69,10 +69,13 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { createOrderJob, getOrderJob, listOrderJobs, listVendorNoOrders, updateOrderJob, updateOrderOpsPaths } from "@/lib/firebase-order-ops";
+import { createOrderJob, getOrderJob, listOrderJobs, listVendorNoOrders, updateOrderJob, updateOrderOpsPaths, excludeCenterRow, deleteOrderJob } from "@/lib/firebase-order-ops";
 import InventoryRegistrationPage from "./inventory-registration-page";
+import CenterOrderQueue from "./center-order-queue";
 
 type OrderRow = {
+  centerQueueId?: string;
+  sourceLineNo?: number;
   sourceFile?: string;
   orderKind?: string;
   supplier?: string;
@@ -162,6 +165,7 @@ type Job = {
       postcodeDecision?: string;
     }>;
   };
+  lastReport?: Job['report'];
   dashboardReview?: {
     state: "QUEUED" | "WAITING_FOR_DASHBOARD" | "BLOCKED" | "ACCEPTED" | "ON_HOLD" | "FINAL_SUBMISSION_APPROVED" | "COMPLETED";
     required: boolean;
@@ -205,6 +209,7 @@ type CalendarDay = {
 };
 
 type PageMode =
+  | "center-queue"
   | "overview"
   | "orders"
   | "inventory"
@@ -254,6 +259,7 @@ const appSections: {
 }[] = [
   { id: "overview", label: "통합 현황", description: "전체 주문 흐름", icon: <BarChart3 className="h-4 w-4" /> },
   { id: "orders", label: "주문 접수", description: "파일 업로드와 검증", icon: <ListChecks className="h-4 w-4" /> },
+  { id: "center-queue", label: "센터 발주 대기열", description: "센터 발주 업로드와 자동 합치기", icon: <Building2 className="h-4 w-4" /> },
   { id: "inventory", label: "입출고 등록", description: "명세서 검수 후 마지막 단계", icon: <ClipboardList className="h-4 w-4" /> },
   { id: "calendar", label: "전체 일정", description: "일정과 기록", icon: <CalendarDays className="h-4 w-4" /> },
   { id: "channels", label: "채널/ERP", description: "사이트와 ERP 연결", icon: <Building2 className="h-4 w-4" /> },
@@ -1307,6 +1313,31 @@ export default function OrderOpsApp() {
     }
   }
 
+  async function removeCenter(centerId: string) {
+    if (!activeJob) return;
+    setLoading(true);
+    try {
+      await excludeCenterRow(activeJob.id, centerId);
+      setMessage('센터 상품을 대기열로 돌렸습니다. 남은 행은 서버 준비와 검토·승인을 다시 진행해 주세요.');
+      await loadJobs(); await openJob(activeJob.id);
+    } catch (error) { setMessage(error instanceof Error ? error.message : '센터 제외 실패'); }
+    finally { setLoading(false); }
+  }
+
+  async function deleteActiveJob() {
+    if (!activeJob) return;
+    setLoading(true);
+    try {
+      await deleteOrderJob(activeJob.id);
+      ++uploadGeneration.current;
+      hasUpload.current = false;
+      setActiveJob(null); setFilename(''); setPreviewRows([]);
+      setMessage('작업을 삭제하고 센터 예약 상품을 대기열로 돌렸습니다.');
+      await loadJobs(true);
+    } catch (error) { setMessage(error instanceof Error ? error.message : '작업 삭제 실패'); }
+    finally { setLoading(false); }
+  }
+
   async function queueFinalSubmission(approvalCode: string) {
     if (isPartsOrder(activeJob)) { setMessage(`${PARTS_ORDER_LABEL}: 자동 준비·제출 대상이 아닙니다.`); return; }
     if (workbookProblem(activeJob)) return;
@@ -1506,6 +1537,8 @@ export default function OrderOpsApp() {
 
         {viewMode === "overview" ? (
           <OverviewPage jobs={jobs} noOrders={vendorNoOrders} onOpenJob={(id) => { setViewMode("orders"); void openJob(id); }} onOpenInventory={() => setViewMode("inventory")} onSelectVendor={(key) => { setVendorNotice(""); setVendorDialogKey(key); }} />
+        ) : viewMode === "center-queue" ? (
+          <CenterOrderQueue jobs={jobs} onOpenJob={id => { setViewMode("orders"); void openJob(id); }} onChanged={() => loadJobs(true)} />
         ) : viewMode === "inventory" ? (
           <InventoryRegistrationPage />
         ) : viewMode === "calendar" ? (
@@ -1566,6 +1599,7 @@ export default function OrderOpsApp() {
                   <Download className="h-4 w-4" />
                   리포트 다운로드
                 </Button>
+                {activeJob ? <AlertDialog><AlertDialogTrigger asChild><Button variant="outline" disabled={loading || ["QUEUED", "RUNNING", "SUBMIT_QUEUED", "COMPLETED"].includes(activeJob.status)}>작업 삭제</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>이 작업을 삭제할까요?</AlertDialogTitle><AlertDialogDescription>제출 이력이 없는 작업을 삭제하고 포함된 센터 상품을 대기열로 돌립니다. 제출 결과 확인이 필요한 작업은 삭제할 수 없습니다.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>유지</AlertDialogCancel><AlertDialogAction onClick={() => void deleteActiveJob()}>작업 삭제</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog> : null}
                 {!activeJob && sourceWorkbook ? (
                   <Button onClick={() => void saveJob()} disabled={loading || Boolean(sheetProblem)}>
                     {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -1601,6 +1635,8 @@ export default function OrderOpsApp() {
                 {rows.length ? <div className="space-y-4">{rows.map((row, index) => <article key={`${row.lineNo}-${index}`} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs text-slate-400">{row.sourceSystem} · 원본 {row.lineNo}행</p><h3 className="mt-2 font-semibold">{row.productName}</h3>{row.option ? <p className="mt-1 text-sm text-slate-500">{row.option}</p> : null}</div><Badge className={statusClass(row.status)}>{statusLabel(row.status)}</Badge></div><dl className="mt-4 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-3 border-t border-slate-100 pt-4 text-sm"><dt className="text-slate-400">원주문번호</dt><dd className="break-all">{row.orderId || "-"}</dd><dt className="text-slate-400">수량</dt><dd>{row.quantity}개</dd><dt className="text-slate-400">수취인</dt><dd>{row.centerOrder ? `센터 발주(수취인: ${row.recipientName || "미확정"})` : row.recipientName || "-"}{row.centerOrder ? <span className="mt-1 block text-xs text-slate-500">{row.centerOrderEvidence?.join(" · ")}</span> : null}<span className="mt-1 block text-xs text-slate-500">{row.recipientPhone}</span></dd><dt className="text-slate-400">배송지</dt><dd className="break-words leading-6">{row.address} {row.addressDetail}</dd><dt className="text-slate-400">배송 메모</dt><dd className="break-words">{row.memo || "-"}</dd>{row.reason ? <><dt className="text-slate-400">검증 사유</dt><dd className="leading-6">{row.reason}</dd></> : null}</dl></article>)}</div> : <EmptyState />}
               </TabsContent>
               <TabsContent value="review" className="mt-4">
+                {activeJob?.lastReport && !activeJob.report ? <section aria-label="이전 처리 결과" className="mb-4 rounded-lg border border-slate-200 p-4"><h3 className="font-semibold">이전 처리 결과 (센터 복귀·제외 전, 읽기 전용)</h3><p className="my-2 text-sm text-slate-600">이 결과는 승인에 사용할 수 없습니다. 사유를 확인한 뒤 남은 행의 서버 준비를 다시 진행해 주세요.</p><ul className="space-y-2 text-sm">{activeJob.lastReport.details.map((detail, index) => <li key={`${detail.lineNo}-${index}`}>{detail.lineNo}행 · {statusLabel(detail.status)} · {detail.reason}</li>)}</ul></section> : null}
+                {activeJob?.rows?.some(row => row.centerQueueId) ? <div className="mb-4 space-y-2 rounded-lg border border-amber-200 p-4"><h3 className="font-semibold">함께 포함한 센터 발주</h3>{activeJob.rows.filter(row => row.centerQueueId).map(row => <div key={row.centerQueueId} className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>{row.productName} · {row.quantity}개 · {row.recipientName} · {row.sourceFile} {row.sourceLineNo}행</span><Button variant="outline" disabled={loading || !["READY", "HOLD", "FAILED", "AWAITING_REVIEW", "REVIEWED"].includes(activeJob.status)} onClick={() => void removeCenter(row.centerQueueId!)}>빼고 대기열로 돌리기</Button></div>)}</div> : null}
                 <WorkerReviewPanel
                   job={activeJob}
                   loading={loading}

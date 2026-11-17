@@ -28,6 +28,21 @@ export function worksheetMatrix(sheet) {
 }
 
 export function workbookProblem(job) {
+  const ordinary = (job?.rows || []).filter(row => !row.centerQueueId);
+  const center = (job?.rows || []).filter(row => row.centerQueueId);
+  // 합친 센터 행은 각각 사람이 선택한 원본 시트 목록을 검증한다.
+  if (center.length) {
+    if (new Set(job.rows.map(row => row.lineNo)).size !== job.rows.length) return '작업 행 번호가 중복되어 있습니다.';
+    for (const row of center) {
+      if (!Number.isSafeInteger(row.sourceLineNo) || row.sourceLineNo < 1 || !/^20\d{6}$/.test(row.sourceDate || '')) return '센터 행의 원본 날짜·행 정보가 없습니다.';
+      const problem = singleWorkbookProblem({ filename: row.sourceFile, selectedSheet: row.selectedSheet,
+        sourceWorkbook: row.sourceWorkbook, rows: [row] });
+      if (problem) return problem;
+    }
+  }
+  return ordinary.length || !center.length ? singleWorkbookProblem({ ...job, rows: ordinary }) : null;
+}
+function singleWorkbookProblem(job) {
   const source = job?.sourceWorkbook;
   if (!source || typeof job.filename !== 'string' || !job.filename || source.filename !== job.filename || !Array.isArray(source.sheets) || !source.sheets.length)
     return '파일의 시트 정보가 없습니다. 엑셀을 다시 업로드하고 처리 시트를 확인해 주세요.';

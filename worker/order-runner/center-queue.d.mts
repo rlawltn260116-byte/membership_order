@@ -1,0 +1,18 @@
+import type { SourceWorkbook } from './workbook-policy.mjs';
+export type CenterRow = Record<string, unknown> & { sourceFile: string; sourceDate: string; sourceSheet: string; sourceLineNo: number; lineNo: number; productName: string; quantity: string; recipientName: string; centerName?: string; memo: string; status: string; supplier: string };
+export type CenterEntry = { id: string; supplier: string; channel: string | null; state: string; row: CenterRow; uploadedAt: string; uploadedDay: string; jobId?: string };
+export type CenterRoot = Record<string, unknown>;
+export function koreaDay(now?: Date | string): string;
+export function supplierChannel(supplier: string): string | null;
+export function centerDeadline(supplier: string, now?: Date): { channel: string | null; label: string; alert: boolean; receiptDeadlineAt?: string; alertAt?: string };
+export function parseCenterSheet(sheet: unknown, source: { filename: string; sourceDate: string; sourceWorkbook: SourceWorkbook }): CenterRow[];
+export function prepareCenterEntries(rows: CenterRow[], now?: Date): Promise<CenterEntry[]>;
+export function uploadCenterEntries(root: CenterRoot, prepared: CenterEntry[], partsJobId: string, now: string): CenterRoot;
+export function createJobWithCenters(root: CenterRoot, id: string, input: Record<string, unknown>, now: string): CenterRoot;
+export function createCenterOnlyJob(root: CenterRoot, id: string, supplier: string, now: string): CenterRoot;
+export function centerReservationProblem(root: CenterRoot, job: unknown): string | null;
+export function updateJobWithCenters(root: CenterRoot, id: string, patch: Record<string, unknown>, now: string, worker?: boolean): CenterRoot;
+export function removeCenterRow(root: CenterRoot, id: string, centerId: string, now: string): CenterRoot;
+export function excludeHeldCenterEntry(root: CenterRoot, id: string, now: string): CenterRoot;
+export function deleteJobWithCenters(root: CenterRoot, id: string): CenterRoot;
+export function centerQueueGroups(root: CenterRoot, now?: Date): Array<{ supplier: string; deadline: ReturnType<typeof centerDeadline>; entries: CenterEntry[]; alert: boolean }>;
