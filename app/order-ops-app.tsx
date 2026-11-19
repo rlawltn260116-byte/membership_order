@@ -525,12 +525,12 @@ function statusLabel(status: string) {
 }
 
 function statusClass(status: string) {
-  if (status === "READY") return "border-slate-200 bg-slate-100 text-slate-700";
+  if (status === "READY") return "border-[#d5dae1] bg-slate-100 text-slate-700";
   if (["QUEUED", "RUNNING"].includes(status)) return "border-orange-200 bg-orange-50 text-orange-800";
   if (["AWAITING_REVIEW", "REVIEWED", "SUBMIT_QUEUED"].includes(status)) return "border-blue-200 bg-blue-50 text-blue-800";
   if (["HOLD", "FAILED"].includes(status)) return "border-red-200 bg-red-50 text-red-800";
   if (status === "COMPLETED") return "border-green-200 bg-green-50 text-green-800";
-  return "border-slate-200 bg-slate-100 text-slate-700";
+  return "border-[#d5dae1] bg-slate-100 text-slate-700";
 }
 
 function workerLabel(job: Job) {
@@ -708,7 +708,7 @@ function buildCalendarDays(monthDate: Date, jobs: Job[]) {
 
 // A 클린 라이트 색감의 단계 배지. 주황=준비 중, 파랑=검토·확정, 빨강=보류·실패, 회색=대기, 초록=완료.
 const STAGE_TONE: Record<string, { badge: string; dot: string; column: string }> = {
-  WAITING: { badge: "border-slate-200 bg-slate-100 text-slate-700", dot: "bg-slate-400", column: "대기" },
+  WAITING: { badge: "border-[#d5dae1] bg-slate-100 text-slate-700", dot: "bg-slate-400", column: "대기" },
   PREPARING: { badge: "border-orange-200 bg-orange-50 text-orange-800", dot: "bg-orange-500", column: "준비 중" },
   REVIEW: { badge: "border-blue-200 bg-blue-50 text-blue-800", dot: "bg-blue-600", column: "검토" },
   CONFIRM: { badge: "border-blue-200 bg-blue-50 text-blue-800", dot: "bg-blue-600", column: "확정" },
@@ -722,18 +722,18 @@ function KanbanCard({ job, now, onOpenJob, onOpenRuns }: { job: Job; now: Date; 
   const minutes = preparingMinutes(job, now);
   const slow = isSlowPreparing(job, now);
   return (
-    <article className={`rounded-2xl border bg-white shadow-sm transition hover:shadow-md ${problem ? "border-red-300" : "border-slate-200"}`}>
+    <article className={`rounded-2xl border bg-white shadow-sm transition hover:shadow-md ${problem ? "border-red-300" : "border-[#d5dae1]"}`}>
       <button type="button" aria-label={`${job.filename} 상세 열기`} onClick={() => onOpenJob(job.id)} className="block w-full rounded-2xl p-4 text-left">
         <span className="flex items-center justify-between gap-2">
           <span className="text-xs font-semibold text-slate-600">{job.sourceSystem || "미지정"} · {jobChannelGroup(job)}</span>
-          <ArrowRight className="h-4 w-4 text-slate-500" />
+          <ArrowRight className="h-4 w-4 text-slate-600" />
         </span>
         <span className="mt-2 line-clamp-2 block break-all text-sm font-bold leading-6 text-slate-900">{job.filename}</span>
         <span className="mt-3 flex items-center justify-between gap-2">
           <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${tone.badge}`}><span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />{statusLabel(job.status)}</span>
           <span className="text-lg font-black tracking-tight text-slate-900">{job.totalRows}<span className="ml-0.5 text-xs font-semibold text-slate-600">건</span></span>
         </span>
-        <span className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
+        <span className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[15px] font-medium tabular-nums text-slate-600">
           {deadline ? <span className="font-semibold text-slate-800">마감 {deadline}</span> : <span>마감 미정</span>}
           <span>{formatDateTime(job.updatedAt)}</span>
         </span>
@@ -765,7 +765,7 @@ function OverviewPage({ jobs, noOrders, onOpenJob, onOpenInventory, onSelectVend
           </div>
           <div role="group" aria-label="채널 필터" className="flex flex-wrap gap-2">
             {CHANNEL_FILTERS.map((name) => (
-              <button key={name} type="button" aria-pressed={channelFilter === name} onClick={() => setChannelFilter(name)} className={`rounded-full border px-4 py-2 text-sm font-bold transition ${channelFilter === name ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-blue-300 hover:text-blue-700"}`}>{name}</button>
+              <button key={name} type="button" aria-pressed={channelFilter === name} onClick={() => setChannelFilter(name)} className={`rounded-full border px-4 py-2 text-sm font-bold transition ${channelFilter === name ? "border-blue-600 bg-blue-600 text-white" : "border-[#d5dae1] bg-white text-slate-700 hover:border-blue-300 hover:text-blue-700"}`}>{name}</button>
             ))}
           </div>
         </div>
@@ -775,7 +775,7 @@ function OverviewPage({ jobs, noOrders, onOpenJob, onOpenInventory, onSelectVend
             const problems = stage.id === "REVIEW" ? grouped.problems : [];
             const tone = STAGE_TONE[stage.id];
             return (
-              <section key={stage.id} aria-label={`${stage.label} 열`} className="min-h-[200px] rounded-3xl bg-white/60 p-4 ring-1 ring-slate-200">
+              <section key={stage.id} aria-label={`${stage.label} 열`} className="min-h-[200px] rounded-3xl bg-[#e0e5ec] p-4 ring-1 ring-[#d5dae1]">
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="flex items-center gap-2 text-base font-black"><span className={`h-2.5 w-2.5 rounded-full ${tone.dot}`} />{stage.label}</h3>
                   <span className="text-3xl font-black tracking-tight text-slate-900">{items.length + problems.length}</span>
@@ -798,7 +798,7 @@ function OverviewPage({ jobs, noOrders, onOpenJob, onOpenInventory, onSelectVend
         </div>
       </section>
       <VendorBoardSection jobs={jobs} noOrders={noOrders ?? []} onSelect={onSelectVendor} onToggleNoOrder={onToggleNoOrder ?? (() => {})} />
-      <section className="flex flex-wrap items-center justify-between gap-3 rounded-3xl bg-white p-5 ring-1 ring-slate-200">
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-3xl bg-white p-5 ring-1 ring-[#d5dae1]">
         <p className="text-sm text-slate-700">주문 완료 후, 검수한 명세서를 근거로 가상 입고와 출고를 한 쌍으로 등록합니다.</p>
         <Button variant="outline" onClick={onOpenInventory}>입출고 절차 보기<ArrowRight className="h-4 w-4" /></Button>
       </section>
@@ -815,7 +815,7 @@ function boardStatusClass(status: string) {
   if (status === "DONE") return "border-green-200 bg-green-50 text-green-800";
   if (status === "IN_PROGRESS") return "border-orange-200 bg-orange-50 text-orange-800";
   if (status === BOARD_STATUS.NO_ORDER) return "border-sky-200 bg-sky-50 text-sky-800";
-  return "border-slate-200 bg-slate-100 text-slate-700";
+  return "border-[#d5dae1] bg-slate-100 text-slate-700";
 }
 
 function methodIcon(kind: string | undefined) {
@@ -834,34 +834,34 @@ function VendorBoardSection({ jobs, noOrders, onSelect, onToggleNoOrder }: { job
   const today = kstParts(now);
   const times = [...new Set(board.map((item) => item.entry.orderDeadline ?? "마감 미정"))];
   return (
-    <section aria-label="업체별 발주 현황" className="rounded-3xl bg-white p-6 ring-1 ring-slate-200">
+    <section aria-label="업체별 발주 현황" className="rounded-3xl bg-[#f7f8fa] p-4 sm:p-6 ring-1 ring-[#d5dae1]">
       <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h2 className="text-xl font-black tracking-tight">오늘 업체별 발주</h2>
-          <p className="mt-1 text-sm text-slate-500">{today?.date} · 직배 시간표 순서 · 업체를 누르면 발주서를 올리고 발주 형태별 작업을 진행합니다.{today && [0, 6].includes(today.weekday) ? " 주말에는 시간표 발주가 없습니다." : ""}</p>
+          <p className="mt-1 text-sm text-slate-600">{today?.date} · 직배 시간표 순서 · 업체를 누르면 발주서를 올리고 발주 형태별 작업을 진행합니다.{today && [0, 6].includes(today.weekday) ? " 주말에는 시간표 발주가 없습니다." : ""}</p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-bold">
           <span className="rounded-full border border-green-200 bg-green-50 px-3 py-1.5 text-green-800">발주 완료 <b className="text-base font-black">{summary.done}/{summary.total}</b></span>
           <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-orange-800">진행 중 <b className="text-base font-black">{summary.inProgress}</b></span>
-          <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-slate-700">발주 전 <b className="text-base font-black">{summary.before}</b></span>
+          <span className="rounded-full border border-[#d5dae1] bg-slate-100 px-3 py-1.5 text-slate-700">발주 전 <b className="text-base font-black">{summary.before}</b></span>
           {summary.noOrder ? <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-sky-800">발주없음 <b className="text-base font-black">{summary.noOrder}</b></span> : null}
           {summary.overdue ? <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-red-800">마감 지남 <b className="text-base font-black">{summary.overdue}</b></span> : null}
         </div>
       </div>
       <div className="mt-4 space-y-4">
         {times.map((time) => (
-          <div key={time} className="grid gap-3 sm:grid-cols-[64px_minmax(0,1fr)]">
-            <p className="pt-3 text-sm font-bold text-slate-700">{time}</p>
+          <div key={time} className="grid gap-3 sm:grid-cols-[76px_minmax(0,1fr)]">
+            <p className="pt-3 text-xl font-bold tabular-nums text-slate-800">{time}</p>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
               {board.filter((item) => (item.entry.orderDeadline ?? "마감 미정") === time).map((item) => (
-                <div key={item.key} className={`relative rounded-2xl border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${item.status === "DONE" ? "border-green-200 bg-green-50/70" : item.status === "IN_PROGRESS" ? "border-orange-200 bg-orange-50/60" : item.status === BOARD_STATUS.NO_ORDER ? "border-sky-200 bg-sky-50/70" : item.overdue ? "border-red-200 bg-red-50/40" : "border-slate-200/80 bg-white"}`}>
-                <button type="button" aria-label={`${boardName(item.entry)} ${item.statusLabel}`} onClick={() => onSelect(item.key)} className="group w-full rounded-2xl p-3 pr-28 text-left">
+                <div key={item.key} className={`relative rounded-2xl border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${item.status === "DONE" ? "border-green-200 bg-green-50/70" : item.status === "IN_PROGRESS" ? "border-orange-200 bg-orange-50/60" : item.status === BOARD_STATUS.NO_ORDER ? "border-sky-200 bg-sky-50/70" : item.overdue ? "border-red-200 bg-red-50/40" : "border-[#d5dae1] bg-white"}`}>
+                <button type="button" aria-label={`${boardName(item.entry)} ${item.statusLabel}`} onClick={() => onSelect(item.key)} className="group w-full rounded-2xl p-3 pb-14 text-left">
                   <div className="flex items-start justify-between gap-2">
-                    <span className="min-w-0"><span className="block truncate text-sm font-semibold">{boardName(item.entry)}</span>{item.entry.vendor !== item.entry.channel ? <span className="block text-[11px] text-slate-500">{item.entry.vendor}</span> : null}</span>
+                    <span className="min-w-0"><span className="block break-keep text-sm font-bold">{boardName(item.entry)}</span>{item.entry.vendor !== item.entry.channel ? <span className="block text-[11px] text-slate-600">{item.entry.vendor}</span> : null}</span>
                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${boardStatusClass(item.status)}`}>{item.statusLabel}</span>
                   </div>
-                  <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">{methodIcon(item.action?.kind)}{item.action?.label ?? item.entry.method} · 접수 {item.entry.receiptDeadline ?? "미정"}</p>
-                  {item.jobs.length ? <p className="mt-1 text-[11px] text-slate-500">오늘 발주서 {item.jobs.length}개{item.waitingReview ? " · 서버 처리·검토 중" : ""}</p> : null}
+                  <p className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-slate-600">{methodIcon(item.action?.kind)}{item.action?.label ?? item.entry.method} · <span className="text-[15px] font-bold tabular-nums text-slate-800">접수 {item.entry.receiptDeadline ?? "미정"}</span></p>
+                  {item.jobs.length ? <p className="mt-1 text-[11px] text-slate-600">오늘 발주서 {item.jobs.length}개{item.waitingReview ? " · 서버 처리·검토 중" : ""}</p> : null}
                   {item.overdue ? <p className="mt-1 text-[11px] font-semibold text-red-700">발주마감 지남</p> : null}
                 </button>
                 {!item.jobs.length ? <span className="absolute bottom-3 right-3 flex items-center gap-2"><span className="text-xs font-medium text-slate-600">발주 없음</span><button type="button" role="checkbox" aria-checked={item.status === BOARD_STATUS.NO_ORDER} aria-label={`${boardName(item.entry)} 발주없음 표시`} onClick={() => onToggleNoOrder(item)} className={`flex h-7 w-7 items-center justify-center rounded-md border text-sm font-bold transition ${item.status === BOARD_STATUS.NO_ORDER ? "border-sky-600 bg-sky-600 text-white" : "border-slate-300 bg-white text-transparent hover:border-sky-500 hover:bg-sky-50"}`}>✓</button></span> : null}
@@ -920,21 +920,21 @@ function VendorOrderActions({ job, loading, onNotice, onMarkDone, onUndoDone }: 
   const mailto = `mailto:?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.text)}`;
   const textOnly = action.warnings.some((warning) => warning.includes("텍스트"));
   return (
-    <section aria-label={`${boardName(entry)} 발주 작업`} className="space-y-3 rounded-xl border border-slate-200 p-4">
+    <section aria-label={`${boardName(entry)} 발주 작업`} className="space-y-3 rounded-xl border border-[#d5dae1] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-semibold">{action.label}<span className="ml-2 text-xs font-normal text-slate-500">{job.totalRows}건{unresolved ? ` · 확인 필요 ${unresolved}행` : ""}</span></p>
+        <p className="text-sm font-semibold">{action.label}<span className="ml-2 text-xs font-normal text-slate-600">{job.totalRows}건{unresolved ? ` · 확인 필요 ${unresolved}행` : ""}</span></p>
         <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${boardStatusClass(done ? "DONE" : "IN_PROGRESS")}`}>{done ? BOARD_STATUS_LABEL.DONE : BOARD_STATUS_LABEL.IN_PROGRESS}</span>
       </div>
       {action.kind === "EMAIL" ? (
         <div className="space-y-2">
           <Input aria-label="메일 제목" readOnly value={draft.subject} />
-          <textarea aria-label="메일 본문" readOnly value={draft.text} className="h-40 w-full rounded-lg border border-slate-200 p-2 text-xs leading-5" />
+          <textarea aria-label="메일 본문" readOnly value={draft.text} className="h-40 w-full rounded-lg border border-[#d5dae1] p-2 text-xs leading-5" />
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => void copy(`${draft.subject}\n\n${draft.text}`, "메일 초안")}><Copy className="h-4 w-4" />메일 초안 복사</Button>
             <Button variant="outline" disabled={mailto.length > 1900} onClick={() => { window.location.href = mailto; }}><Mail className="h-4 w-4" />메일 앱에서 초안 열기</Button>
             <Button variant="outline" onClick={() => void downloadOrderSheet(entry, rows)}><Download className="h-4 w-4" />발주서 엑셀 내려받기</Button>
           </div>
-          <p className="text-xs text-slate-500">받는 사람은 공개 저장소에 두지 않으므로 로컬 메모에서 확인해 넣습니다. 메일 앱은 초안만 열며 자동으로 보내지 않습니다.{mailto.length > 1900 ? " 본문이 길어 메일 앱 열기는 꺼져 있습니다. 복사해 붙여 넣으세요." : ""}</p>
+          <p className="text-xs text-slate-600">받는 사람은 공개 저장소에 두지 않으므로 로컬 메모에서 확인해 넣습니다. 메일 앱은 초안만 열며 자동으로 보내지 않습니다.{mailto.length > 1900 ? " 본문이 길어 메일 앱 열기는 꺼져 있습니다. 복사해 붙여 넣으세요." : ""}</p>
         </div>
       ) : action.kind === "FAX" ? (
         <div className="space-y-2">
@@ -942,16 +942,16 @@ function VendorOrderActions({ job, loading, onNotice, onMarkDone, onUndoDone }: 
             <Button variant="outline" onClick={() => openPrintableOrder(entry, rows)}><Printer className="h-4 w-4" />인쇄용 발주서 열기</Button>
             <Button variant="outline" onClick={() => void downloadOrderSheet(entry, rows)}><Download className="h-4 w-4" />발주서 엑셀 내려받기</Button>
           </div>
-          <p className="text-xs text-slate-500">팩스 번호는 로컬 메모에서 확인합니다. 인쇄 화면만 열며 팩스를 보내지 않습니다.</p>
+          <p className="text-xs text-slate-600">팩스 번호는 로컬 메모에서 확인합니다. 인쇄 화면만 열며 팩스를 보내지 않습니다.</p>
         </div>
       ) : action.kind === "KAKAO" ? (
         <div className="space-y-2">
-          <textarea aria-label="카톡 문구" readOnly value={draft.text} className="h-40 w-full rounded-lg border border-slate-200 p-2 text-xs leading-5" />
+          <textarea aria-label="카톡 문구" readOnly value={draft.text} className="h-40 w-full rounded-lg border border-[#d5dae1] p-2 text-xs leading-5" />
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => void copy(draft.text, "카톡 문구")}><Copy className="h-4 w-4" />카톡 문구 복사</Button>
             {textOnly ? null : <Button variant="outline" onClick={() => void downloadOrderSheet(entry, rows)}><Download className="h-4 w-4" />발주서 엑셀 내려받기</Button>}
           </div>
-          <p className="text-xs text-slate-500">문구를 복사해 업체 {action.label === "카톡친구 발주" ? "친구 채팅" : "카톡방"}에 붙여 넣습니다. 이 화면은 카톡을 보내지 않습니다.</p>
+          <p className="text-xs text-slate-600">문구를 복사해 업체 {action.label === "카톡친구 발주" ? "친구 채팅" : "카톡방"}에 붙여 넣습니다. 이 화면은 카톡을 보내지 않습니다.</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -960,7 +960,7 @@ function VendorOrderActions({ job, loading, onNotice, onMarkDone, onUndoDone }: 
             <Button variant="outline" onClick={() => void copy([ORDER_SHEET_HEADERS, ...orderSheetRows(rows)].map((cells) => cells.join("\t")).join("\n"), "입력값")}><Copy className="h-4 w-4" />입력값 복사</Button>
             <Button variant="outline" onClick={() => void downloadOrderSheet(entry, rows)}><Download className="h-4 w-4" />발주서 엑셀 내려받기</Button>
           </div>
-          <p className="text-xs text-slate-500">{action.kind === "ERP" ? "ERP 품목코드·거래처는 자동 확정하지 않습니다. 포털에서 품목·수량·납품처를 대조해 등록하세요." : "이 B2B몰은 아직 서버 자동 주문이 연결되지 않았습니다. 사이트에서 상품·옵션·신규 배송지를 직접 입력하세요."}</p>
+          <p className="text-xs text-slate-600">{action.kind === "ERP" ? "ERP 품목코드·거래처는 자동 확정하지 않습니다. 포털에서 품목·수량·납품처를 대조해 등록하세요." : "이 B2B몰은 아직 서버 자동 주문이 연결되지 않았습니다. 사이트에서 상품·옵션·신규 배송지를 직접 입력하세요."}</p>
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
@@ -1030,7 +1030,7 @@ function VendorOrderDialog({ item, loading, notice, onClose, onUpload, onOpenJob
             ) : item.status === BOARD_STATUS.BEFORE ? (
               <Button variant="outline" disabled={loading} onClick={() => onNoOrder(item)}>발주없음 표시</Button>
             ) : null}
-            <p className="text-xs text-slate-500">{action?.kind === "B2B_AUTO" ? "업로드하면 주문 관리 화면에서 시트 확인·저장 후 서버 준비 요청을 진행합니다. 실제 제출은 검토와 최종 승인 뒤에만 실행됩니다." : "업로드하면 주문 관리 화면에서 시트 확인·저장한 뒤, 이 창이나 주문 상세에서 발주 형태에 맞는 초안을 만들고 보낸 뒤 완료 표시합니다."}</p>
+            <p className="text-xs text-slate-600">{action?.kind === "B2B_AUTO" ? "업로드하면 주문 관리 화면에서 시트 확인·저장 후 서버 준비 요청을 진행합니다. 실제 제출은 검토와 최종 승인 뒤에만 실행됩니다." : "업로드하면 주문 관리 화면에서 시트 확인·저장한 뒤, 이 창이나 주문 상세에서 발주 형태에 맞는 초안을 만들고 보낸 뒤 완료 표시합니다."}</p>
             {notice ? <p className="rounded-lg bg-[#fff8e6] px-3 py-2 text-sm text-slate-800">{notice}</p> : null}
             <div className="space-y-3">
               <h3 className="text-sm font-semibold">오늘 올린 발주서 {item.jobs.length}개</h3>
@@ -1040,7 +1040,7 @@ function VendorOrderDialog({ item, loading, notice, onClose, onUpload, onOpenJob
                   {action?.manualDone ? <VendorOrderActions job={job} loading={loading} onNotice={onNotice} onMarkDone={onMarkDone} onUndoDone={onUndoDone} /> : null}
                   <Button variant="ghost" size="sm" onClick={() => onOpenJob(job.id)}>주문 관리에서 열기<ArrowRight className="h-4 w-4" /></Button>
                 </div>
-              )) : <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">아직 올린 발주서가 없습니다.</p>}
+              )) : <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">아직 올린 발주서가 없습니다.</p>}
             </div>
           </>
         ) : null}
@@ -1051,27 +1051,27 @@ function VendorOrderDialog({ item, loading, notice, onClose, onUpload, onOpenJob
 
 function OrderChannelSidebar({ onSelect, selected }: { onSelect: (channel: string | null) => void; selected: string | null }) {
   return (
-    <aside className="mt-5 border-t border-slate-200 px-2 pt-5">
-      <div className="border-b border-slate-200 px-2 pb-3">
+    <aside className="mt-5 border-t border-[#d5dae1] px-2 pt-5">
+      <div className="border-b border-[#d5dae1] px-2 pb-3">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">주문 채널</p>
-        <button onClick={() => onSelect(null)} className={`mt-3 w-full rounded-lg px-2 py-2 text-left text-sm ${!selected ? "bg-blue-50 font-bold text-blue-700" : "text-slate-500"}`}>전체 채널</button>
+        <button onClick={() => onSelect(null)} className={`mt-3 w-full rounded-lg px-3 py-3 text-left text-sm font-medium ${!selected ? "bg-blue-50 font-bold text-blue-700" : "text-slate-600"}`}>전체 채널</button>
       </div>
       <div className="mt-3 space-y-4">
         {orderChannelGroups.map((group) => (
           <section key={group.title}>
             <div className="px-2">
-              <h3 className="text-sm font-semibold text-slate-900">{group.title}</h3>
+              <h3 className="text-sm font-bold text-slate-900">{group.title}</h3>
             </div>
-            <div className="mt-1.5 space-y-0.5">
+            <div className="mt-1.5 space-y-1">
               {group.items.map((item) => (
                 <button
                   key={item}
                   type="button"
-                  className={`flex w-full items-center rounded-lg px-2 py-2 text-left text-sm transition hover:bg-blue-50 ${selected === item ? "bg-blue-50 font-bold text-blue-700" : "text-slate-500"}`}
+                  className={`flex w-full items-center rounded-lg px-3 py-3 text-left text-sm font-medium transition hover:bg-blue-50 ${selected === item ? "bg-blue-50 font-bold text-blue-700" : "text-slate-600"}`}
                   onClick={() => onSelect(item)}
                 >
                   <span className="mr-2 h-1.5 w-1.5 rounded-full bg-slate-300" />
-                  <span className="min-w-0"><span className="block truncate">{item}</span><span className="block text-[10px] leading-4 text-slate-500">{scheduleLabel(item)}</span></span>
+                  <span className="min-w-0"><span className="block truncate">{item}</span><span className="mt-1 block break-keep text-sm font-medium leading-5 tabular-nums text-slate-600">{scheduleLabel(item)}</span></span>
                 </button>
               ))}
             </div>
@@ -1084,7 +1084,7 @@ function OrderChannelSidebar({ onSelect, selected }: { onSelect: (channel: strin
 
 function OverviewCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+    <div className="rounded-lg border border-[#d5dae1] bg-slate-50 p-4">
       <span className="text-sm text-slate-600">{label}</span>
       <strong className="mt-2 block text-2xl">{value.toLocaleString()}</strong>
     </div>
@@ -1510,22 +1510,22 @@ export default function OrderOpsApp() {
   const duplicateFiles = duplicateOrderFiles(activeJob ?? { filename, sourceSystem: previewRows[0]?.sourceSystem }, jobs);
 
   return (
-    <main className="ops-shell min-h-screen bg-[#f2f4f6] text-slate-900">
+    <main className="ops-shell min-h-screen bg-[#e9ecf1] text-slate-900">
       <aside className="ops-sidebar">
-        <div className="flex items-center gap-3 px-3 pb-7 pt-2"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white"><ClipboardList className="h-5 w-5" /></span><span className="text-sm font-bold leading-5">Membership<span className="block text-xs font-medium text-slate-500">주문 운영</span></span></div>
+        <div className="flex items-center gap-3 px-3 pb-7 pt-2"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white"><ClipboardList className="h-5 w-5" /></span><span className="text-sm font-bold leading-5">Membership<span className="block text-xs font-medium text-slate-600">주문 운영</span></span></div>
         <nav className="space-y-1">
-          {appSections.map((section) => <button key={section.id} onClick={() => setViewMode(section.id)} aria-current={viewMode === section.id ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition ${viewMode === section.id ? "bg-blue-50 font-bold text-blue-700" : "text-slate-500 hover:bg-slate-100"}`}>{section.icon}{section.id === "orders" ? "주문 관리" : section.label}</button>)}
+          {appSections.map((section) => <button key={section.id} onClick={() => setViewMode(section.id)} aria-current={viewMode === section.id ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition ${viewMode === section.id ? "bg-blue-50 font-bold text-blue-700" : "text-slate-600 hover:bg-slate-100"}`}>{section.icon}{section.id === "orders" ? "주문 관리" : section.label}</button>)}
         </nav>
         <OrderChannelSidebar selected={selectedChannel} onSelect={(channel) => { setSelectedChannel(channel); setViewMode("orders"); }} />
-        <div className="mt-6 border-t border-slate-200 px-3 pt-4 text-xs leading-5 text-slate-500">아마란스 직접 연동<span className="block text-slate-500">연결 준비 중 · 현재 엑셀 접수 지원</span></div>
+        <div className="mt-6 border-t border-[#d5dae1] px-3 pt-4 text-xs leading-5 text-slate-600">아마란스 직접 연동<span className="block text-slate-600">연결 준비 중 · 현재 엑셀 접수 지원</span></div>
       </aside>
       <div className="ops-content flex min-w-0 flex-col gap-6 p-4 sm:p-7 xl:p-9">
         <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
             <div>
-              <p className="mb-1.5 text-xs font-medium tracking-wide text-slate-500">MEMBERSHIP / OPERATIONS</p>
+              <p className="mb-1.5 text-xs font-medium tracking-wide text-slate-600">MEMBERSHIP / OPERATIONS</p>
               <h1 className="text-3xl font-bold tracking-tight">{viewMode === "orders" ? "주문 관리" : appSections.find((section) => section.id === viewMode)?.label}</h1>
-              <p className="mt-2 text-sm text-slate-500">{viewMode === "overview" ? "발주 접수부터 명세서 검수·입출고 등록까지, 전체 업무 흐름을 확인하세요." : viewMode === "inventory" ? "검수한 명세서를 근거로 아마란스에 입고·출고를 등록하는 마지막 단계입니다." : "채널별 주문을 확인하고 검증 결과에 따라 승인하세요."}</p>
+              <p className="mt-2 text-sm text-slate-600">{viewMode === "overview" ? "발주 접수부터 명세서 검수·입출고 등록까지, 전체 업무 흐름을 확인하세요." : viewMode === "inventory" ? "검수한 명세서를 근거로 아마란스에 입고·출고를 등록하는 마지막 단계입니다." : "채널별 주문을 확인하고 검증 결과에 따라 승인하세요."}</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1594,17 +1594,17 @@ export default function OrderOpsApp() {
           />
         ) : viewMode === "orders" ? (
           <section className="grid items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(480px,0.9fr)]">
-            <aside className="min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white">
-            <div className="border-b border-slate-200 p-4">
-              <div className="flex gap-4 border-b border-slate-100 pb-3">{[{id:"all",label:"전체 주문"},{id:"pending",label:"승인·실행 대기"},{id:"completed",label:"주문 완료"}].map((filter) => <button key={filter.id} onClick={() => setJobFilter(filter.id)} className={`pb-2 text-sm ${jobFilter === filter.id ? "border-b-2 border-blue-600 font-bold text-blue-700" : "text-slate-500"}`}>{filter.label}</button>)}</div>
-              <div className="relative mt-4"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-500" /><Input aria-label="주문 검색" className="pl-9" placeholder="파일명, 주문번호, 상품, 수취인 검색" value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} /></div>
-              <p className="mt-3 text-xs text-slate-500">{selectedChannel || "전체 채널"} · {visibleJobs.length}개 작업</p>
-              <select aria-label="주문 채널 필터" className="mt-3 w-full rounded-lg border border-slate-200 bg-white p-2 text-sm text-slate-600 lg:hidden" value={selectedChannel || ""} onChange={(event) => setSelectedChannel(event.target.value || null)}><option value="">전체 채널</option>{orderChannelGroups.map((group) => <optgroup key={group.title} label={group.title}>{group.items.map((channel) => <option key={channel} value={channel}>{channel}</option>)}</optgroup>)}</select>
+            <aside className="min-w-0 overflow-hidden rounded-2xl border border-[#d5dae1] bg-white">
+            <div className="border-b border-[#d5dae1] p-4">
+              <div className="flex gap-4 border-b border-slate-100 pb-3">{[{id:"all",label:"전체 주문"},{id:"pending",label:"승인·실행 대기"},{id:"completed",label:"주문 완료"}].map((filter) => <button key={filter.id} onClick={() => setJobFilter(filter.id)} className={`pb-2 text-sm ${jobFilter === filter.id ? "border-b-2 border-blue-600 font-bold text-blue-700" : "text-slate-600"}`}>{filter.label}</button>)}</div>
+              <div className="relative mt-4"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-600" /><Input aria-label="주문 검색" className="pl-9" placeholder="파일명, 주문번호, 상품, 수취인 검색" value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} /></div>
+              <p className="mt-3 text-xs text-slate-600">{selectedChannel || "전체 채널"} · {visibleJobs.length}개 작업</p>
+              <select aria-label="주문 채널 필터" className="mt-3 w-full rounded-lg border border-[#d5dae1] bg-white p-2 text-sm text-slate-600 lg:hidden" value={selectedChannel || ""} onChange={(event) => setSelectedChannel(event.target.value || null)}><option value="">전체 채널</option>{orderChannelGroups.map((group) => <optgroup key={group.title} label={group.title}>{group.items.map((channel) => <option key={channel} value={channel}>{channel}</option>)}</optgroup>)}</select>
             </div>
             <section aria-label={PARTS_ORDER_LABEL} className="border-b border-amber-200 bg-amber-50 p-4">
               <h3 className="text-sm font-semibold">{PARTS_ORDER_LABEL}</h3>
               <p className="mt-1 text-xs text-amber-900">보류 · 자동 준비·제출 제외 · {partsJobs.length}개 작업</p>
-              {partsJobs.map(job => <button key={job.id} className="mt-3 block w-full rounded-lg border border-amber-200 bg-white p-3 text-left text-sm" onClick={() => void openJob(job.id)}>{job.filename}<span className="mt-1 block text-xs text-slate-500">{job.totalRows}행 · 보류</span></button>)}
+              {partsJobs.map(job => <button key={job.id} className="mt-3 block w-full rounded-lg border border-amber-200 bg-white p-3 text-left text-sm" onClick={() => void openJob(job.id)}>{job.filename}<span className="mt-1 block text-xs text-slate-600">{job.totalRows}행 · 보류</span></button>)}
             </section>
             <div className="max-h-[760px] overflow-auto">
               {visibleJobs.length === 0 ? (
@@ -1612,16 +1612,16 @@ export default function OrderOpsApp() {
                   조건에 맞는 주문 작업이 없습니다.
                 </div>
               ) : (
-                <Table><TableHeader><TableRow><TableHead>주문 작업</TableHead><TableHead>채널</TableHead><TableHead>건수</TableHead><TableHead>상태</TableHead></TableRow></TableHeader><TableBody>{visibleJobs.map((job) => <TableRow key={job.id} data-state={activeJob?.id === job.id ? "selected" : undefined} className={activeJob?.id === job.id ? "bg-blue-50/80" : "hover:bg-slate-50"}><TableCell className="max-w-[280px] whitespace-normal"><button onClick={() => void openJob(job.id)} className="w-full text-left"><span className="line-clamp-2 text-sm font-medium leading-6">{job.filename}</span><span className="mt-1 block text-[11px] text-slate-500">{formatDateTime(job.updatedAt)}</span></button></TableCell><TableCell><span className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600">{job.sourceSystem || "미지정"}</span></TableCell><TableCell>{job.totalRows}</TableCell><TableCell><button aria-label={`${job.filename} 상세 열기`} onClick={() => void openJob(job.id)}><Badge className={statusClass(job.status)}>{statusLabel(job.status)}</Badge></button></TableCell></TableRow>)}</TableBody></Table>
+                <Table><TableHeader><TableRow><TableHead>주문 작업</TableHead><TableHead>채널</TableHead><TableHead>건수</TableHead><TableHead>상태</TableHead></TableRow></TableHeader><TableBody>{visibleJobs.map((job) => <TableRow key={job.id} data-state={activeJob?.id === job.id ? "selected" : undefined} className={activeJob?.id === job.id ? "bg-blue-50/80" : "hover:bg-slate-50"}><TableCell className="max-w-[280px] whitespace-normal"><button onClick={() => void openJob(job.id)} className="w-full text-left"><span className="line-clamp-2 text-sm font-medium leading-6">{job.filename}</span><span className="mt-1 block text-sm font-medium tabular-nums text-slate-600">{formatDateTime(job.updatedAt)}</span></button></TableCell><TableCell><span className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600">{job.sourceSystem || "미지정"}</span></TableCell><TableCell>{job.totalRows}</TableCell><TableCell><button aria-label={`${job.filename} 상세 열기`} onClick={() => void openJob(job.id)}><Badge className={statusClass(job.status)}>{statusLabel(job.status)}</Badge></button></TableCell></TableRow>)}</TableBody></Table>
               )}
             </div>
             </aside>
 
-            <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white">
-            <div className="flex flex-col gap-3 border-b border-slate-200 p-4 xl:flex-row xl:items-center xl:justify-between">
+            <section className="min-w-0 overflow-hidden rounded-2xl border border-[#d5dae1] bg-white">
+            <div className="flex flex-col gap-3 border-b border-[#d5dae1] p-4 xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="w-full text-xs font-semibold tracking-wide text-slate-500">주문 상세</p>
+                  <p className="w-full text-xs font-semibold tracking-wide text-slate-600">주문 상세</p>
                   <h2 className="break-all text-base font-semibold leading-7">{currentTitle}</h2>
                   {activeJob ? (
                     <Badge className={statusClass(activeJob.status)}>{statusLabel(activeJob.status)}</Badge>
@@ -1655,13 +1655,13 @@ export default function OrderOpsApp() {
             </div>
 
             {!activeJob && sourceWorkbook ? <WorkbookSheetPicker source={sourceWorkbook} selectedSheet={selectedSheet} disabled={loading} onSelect={(sheet) => { if (uploadWorkbook && !loading) selectUploadSheet(uploadWorkbook, filename, sheet, uploadTarget); }} /> : null}
-            {activeJob ? <div className="border-b border-slate-200 px-4 py-3 text-sm">처리 시트: {activeJob.selectedSheet || "미선택"}{activeJob.sourceWorkbook?.sheets.some(sheet => sheet.state !== "visible") ? " · 숨김 시트 있음 (처리 제외)" : ""}{sheetProblem ? <p role="alert" className="mt-2 text-amber-800">{sheetProblem}</p> : null}</div> : null}
+            {activeJob ? <div className="border-b border-[#d5dae1] px-4 py-3 text-sm">처리 시트: {activeJob.selectedSheet || "미선택"}{activeJob.sourceWorkbook?.sheets.some(sheet => sheet.state !== "visible") ? " · 숨김 시트 있음 (처리 제외)" : ""}{sheetProblem ? <p role="alert" className="mt-2 text-amber-800">{sheetProblem}</p> : null}</div> : null}
             {duplicateFiles.length ? <div role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">같은 날짜·같은 업체의 발주서가 이미 {duplicateFiles.length}개 있습니다. 수정본·추가본인지 확인해 주세요. 자동 차단하지 않습니다.<ul className="mt-2 list-inside list-disc">{duplicateFiles.map((job) => <li key={job.id}>{job.filename}</li>)}</ul></div> : null}
 
-            {!activeJob && uploadTarget ? <p className="border-b border-slate-200 bg-emerald-50/60 px-4 py-3 text-sm text-emerald-900">업체 카드에서 올린 발주서: {uploadTarget.channel} · {vendorAction(uploadTarget.channel)?.label ?? uploadTarget.method} · 저장하면 이 업체 회차의 오늘 발주로 표시됩니다.</p> : null}
-            {activeJob && activeAction?.manualDone ? <div className="border-b border-slate-200 p-4">{vendorNotice ? <p className="mb-3 rounded-lg bg-[#fff8e6] px-3 py-2 text-sm text-slate-800">{vendorNotice}</p> : null}<VendorOrderActions job={activeJob} loading={loading} onNotice={setVendorNotice} onMarkDone={(job) => void markVendorOrderDone(job)} onUndoDone={(job) => void undoVendorOrderDone(job)} /></div> : null}
-            {activeJob?.scheduledPreparation ? <p className="border-b border-slate-200 px-4 py-3 text-sm text-slate-600">준비 예약: {formatDateTime(activeJob.scheduledPreparation.runAt)} · 접수마감: {formatDateTime(activeJob.scheduledPreparation.receiptDeadlineAt)} · 실제 제출은 검토·최종 승인 후 실행</p> : null}
-            {message ? <div className="border-b border-slate-200 bg-[#fff8e6] px-4 py-3 text-sm text-slate-800">{message}</div> : null}
+            {!activeJob && uploadTarget ? <p className="border-b border-[#d5dae1] bg-emerald-50/60 px-4 py-3 text-sm text-emerald-900">업체 카드에서 올린 발주서: {uploadTarget.channel} · {vendorAction(uploadTarget.channel)?.label ?? uploadTarget.method} · 저장하면 이 업체 회차의 오늘 발주로 표시됩니다.</p> : null}
+            {activeJob && activeAction?.manualDone ? <div className="border-b border-[#d5dae1] p-4">{vendorNotice ? <p className="mb-3 rounded-lg bg-[#fff8e6] px-3 py-2 text-sm text-slate-800">{vendorNotice}</p> : null}<VendorOrderActions job={activeJob} loading={loading} onNotice={setVendorNotice} onMarkDone={(job) => void markVendorOrderDone(job)} onUndoDone={(job) => void undoVendorOrderDone(job)} /></div> : null}
+            {activeJob?.scheduledPreparation ? <p className="border-b border-[#d5dae1] px-4 py-3 text-sm text-slate-600">준비 예약: {formatDateTime(activeJob.scheduledPreparation.runAt)} · 접수마감: {formatDateTime(activeJob.scheduledPreparation.receiptDeadlineAt)} · 실제 제출은 검토·최종 승인 후 실행</p> : null}
+            {message ? <div className="border-b border-[#d5dae1] bg-[#fff8e6] px-4 py-3 text-sm text-slate-800">{message}</div> : null}
 
             <Tabs defaultValue="rows" className="p-4">
               <TabsList>
@@ -1674,7 +1674,7 @@ export default function OrderOpsApp() {
                 <OrderRowsPanel rows={rows} />
               </TabsContent>
               <TabsContent value="review" className="mt-4">
-                {activeJob?.lastReport && !activeJob.report ? <section aria-label="이전 처리 결과" className="mb-4 rounded-lg border border-slate-200 p-4"><h3 className="font-semibold">이전 처리 결과 (센터 복귀·제외 전, 읽기 전용)</h3><p className="my-2 text-sm text-slate-600">이 결과는 승인에 사용할 수 없습니다. 사유를 확인한 뒤 남은 행의 서버 준비를 다시 진행해 주세요.</p><ul className="space-y-2 text-sm">{activeJob.lastReport.details.map((detail, index) => <li key={`${detail.lineNo}-${index}`}>{detail.lineNo}행 · {statusLabel(detail.status)} · {detail.reason}</li>)}</ul></section> : null}
+                {activeJob?.lastReport && !activeJob.report ? <section aria-label="이전 처리 결과" className="mb-4 rounded-lg border border-[#d5dae1] p-4"><h3 className="font-semibold">이전 처리 결과 (센터 복귀·제외 전, 읽기 전용)</h3><p className="my-2 text-sm text-slate-600">이 결과는 승인에 사용할 수 없습니다. 사유를 확인한 뒤 남은 행의 서버 준비를 다시 진행해 주세요.</p><ul className="space-y-2 text-sm">{activeJob.lastReport.details.map((detail, index) => <li key={`${detail.lineNo}-${index}`}>{detail.lineNo}행 · {statusLabel(detail.status)} · {detail.reason}</li>)}</ul></section> : null}
                 {activeJob?.rows?.some(row => row.centerQueueId) ? <div className="mb-4 space-y-2 rounded-lg border border-amber-200 p-4"><h3 className="font-semibold">함께 포함한 센터 발주</h3>{activeJob.rows.filter(row => row.centerQueueId).map(row => <div key={row.centerQueueId} className="flex flex-wrap items-center justify-between gap-2 text-sm"><span>{row.productName} · {row.quantity}개 · {row.recipientName} · {row.sourceFile} {row.sourceLineNo}행</span><Button variant="outline" disabled={loading || !["READY", "HOLD", "FAILED", "AWAITING_REVIEW", "REVIEWED"].includes(activeJob.status)} onClick={() => void removeCenter(row.centerQueueId!)}>빼고 대기열로 돌리기</Button></div>)}</div> : null}
                 <WorkerReviewPanel
                   job={activeJob}
@@ -1751,7 +1751,7 @@ function AuditLogPanel({ job }: { job: Job | null }) {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
-      <aside className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <aside className="rounded-lg border border-[#d5dae1] bg-slate-50 p-4">
         <h3 className="font-semibold">작업자 요약</h3>
         <div className="mt-3 space-y-3 text-sm">
           <WorkerSummary label="접수자" name={job.createdByName} email={job.createdByEmail} date={job.createdAt} />
@@ -1759,8 +1759,8 @@ function AuditLogPanel({ job }: { job: Job | null }) {
         </div>
       </aside>
 
-      <div className="rounded-lg border border-slate-200 bg-white">
-        <div className="border-b border-slate-200 p-4">
+      <div className="rounded-lg border border-[#d5dae1] bg-white">
+        <div className="border-b border-[#d5dae1] p-4">
           <h3 className="font-semibold">주문 작업 로그</h3>
           <p className="mt-1 text-sm text-slate-600">저장, 상태 변경, 승인, 제출 같은 주문 관련 행동을 시간순으로 남깁니다.</p>
         </div>
@@ -1881,7 +1881,7 @@ function WorkerReviewPanel({
           </div>
         </div>
       ) : null}
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="rounded-lg border border-[#d5dae1] bg-white p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="font-semibold">서버 처리 상세</h3>
@@ -1912,7 +1912,7 @@ function WorkerReviewPanel({
           )}
         </div>
         {report.details.length ? (
-          <div className="mt-4 overflow-hidden rounded-md border border-slate-200">
+          <div className="mt-4 overflow-hidden rounded-md border border-[#d5dae1]">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1931,9 +1931,9 @@ function WorkerReviewPanel({
                       {detail.submissionState === "UNKNOWN" ? <div className="mt-1 font-semibold text-rose-700">UNKNOWN · 결과 불명확: 주문내역 확인 전 재시도 금지</div> : null}
                       {job.sourceSystem === "보필" ? <div className="mt-1 text-xs text-slate-600">상품·옵션: {job.rows?.find(row => row.lineNo === detail.lineNo)?.productName || detail.productId || "미확정"} · {detail.optionName || "옵션 미확정"} · 수량 {detail.quantity ?? "-"}<br />{detail.postcodeDecision || "우편번호 판정 미확인"}</div> : null}
                       {detail.reviewNotes?.length ? <div className="mt-2 font-medium text-amber-800">특이사항: {detail.reviewNotes.join(" / ")}</div> : null}
-                      {report.transport === "HTTP" && detail.orderGroup ? <div className="mt-1 text-xs text-slate-500">{detail.vendor === "bofeel" ? "보필" : "이로움"} · 배송지 묶음 {detail.orderGroup} · {detail.addressMode === "shippingNew" ? "직접 입력" : "신규 배송지"} · 상품 {detail.productId}</div> : null}
+                      {report.transport === "HTTP" && detail.orderGroup ? <div className="mt-1 text-xs text-slate-600">{detail.vendor === "bofeel" ? "보필" : "이로움"} · 배송지 묶음 {detail.orderGroup} · {detail.addressMode === "shippingNew" ? "직접 입력" : "신규 배송지"} · 상품 {detail.productId}</div> : null}
                       {detail.orderNumber ? <div className="mt-1 font-semibold text-emerald-700">주문번호 {detail.orderNumber}</div> : null}
-                      {detail.submittedAt ? <div className="mt-1 text-xs text-slate-500">제출 {formatDateTime(detail.submittedAt)}</div> : null}
+                      {detail.submittedAt ? <div className="mt-1 text-xs text-slate-600">제출 {formatDateTime(detail.submittedAt)}</div> : null}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1944,7 +1944,7 @@ function WorkerReviewPanel({
           <p className="mt-4 text-sm text-slate-600">행별 예외가 없습니다. 주문 행 탭에서 상품과 배송 정보를 검토하세요.</p>
         )}
         {alreadyReviewed && review ? (
-          <p className="mt-3 text-xs text-slate-500">{review.reviewedByName || "주문 운영자"} · {formatDateTime(review.updatedAt)} {review.note ? `· ${review.note}` : ""}</p>
+          <p className="mt-3 text-xs text-slate-600">{review.reviewedByName || "주문 운영자"} · {formatDateTime(review.updatedAt)} {review.note ? `· ${review.note}` : ""}</p>
         ) : null}
       </div>
       {submissionEligible ? (
@@ -2028,11 +2028,11 @@ function WorkerSummary({
   date?: string;
 }) {
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-3">
-      <span className="text-xs font-semibold text-slate-500">{label}</span>
+    <div className="rounded-md border border-[#d5dae1] bg-white p-3">
+      <span className="text-xs font-semibold text-slate-600">{label}</span>
       <p className="mt-1 font-medium">{name || "알 수 없음"}</p>
-      {email ? <p className="text-xs text-slate-500">{email}</p> : null}
-      {date ? <p className="mt-2 text-xs text-slate-500">{formatDateTime(date)}</p> : null}
+      {email ? <p className="text-xs text-slate-600">{email}</p> : null}
+      {date ? <p className="mt-2 text-xs text-slate-600">{formatDateTime(date)}</p> : null}
     </div>
   );
 }
@@ -2042,13 +2042,13 @@ function AuditLogItem({ log }: { log: AuditLog }) {
     <div className="flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge className="border-slate-200 bg-slate-50 text-slate-700">{auditActionLabel(log.action)}</Badge>
+          <Badge className="border-[#d5dae1] bg-slate-50 text-slate-700">{auditActionLabel(log.action)}</Badge>
           <span className="text-sm font-medium">{log.actorName || "알 수 없음"}</span>
-          {log.actorEmail ? <span className="text-xs text-slate-500">{log.actorEmail}</span> : null}
+          {log.actorEmail ? <span className="text-xs text-slate-600">{log.actorEmail}</span> : null}
         </div>
         <p className="mt-2 text-sm leading-6 text-slate-700">{log.detail}</p>
       </div>
-      <time className="text-xs text-slate-500">{formatDateTime(log.createdAt)}</time>
+      <time className="text-sm font-medium tabular-nums text-slate-600">{formatDateTime(log.createdAt)}</time>
     </div>
   );
 }
@@ -2110,8 +2110,8 @@ function OperationsCalendar({
   }
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <div className="flex flex-col gap-3 border-b border-slate-200 p-4 xl:flex-row xl:items-center xl:justify-between">
+    <section className="rounded-lg border border-[#d5dae1] bg-white">
+      <div className="flex flex-col gap-3 border-b border-[#d5dae1] p-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-md bg-teal-50 text-teal-700">
             <CalendarDays className="h-5 w-5" />
@@ -2122,15 +2122,15 @@ function OperationsCalendar({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge className="border-slate-200 bg-slate-50 text-slate-700">{jobs.length}개 작업</Badge>
+          <Badge className="border-[#d5dae1] bg-slate-50 text-slate-700">{jobs.length}개 작업</Badge>
           <Badge className="border-amber-200 bg-amber-50 text-amber-700">{queued}개 실행 대기</Badge>
           <Badge className="border-rose-200 bg-rose-50 text-rose-700">{failed}개 실패 포함</Badge>
         </div>
       </div>
 
       <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="rounded-lg border border-slate-200">
-        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="rounded-lg border border-[#d5dae1]">
+        <div className="flex flex-col gap-3 border-b border-[#d5dae1] p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div>
               <h3 className="font-semibold">{monthLabel}</h3>
@@ -2148,7 +2148,7 @@ function OperationsCalendar({
           </div>
         </div>
 
-        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50 text-center text-xs font-medium text-slate-500">
+        <div className="grid grid-cols-7 border-b border-[#d5dae1] bg-slate-50 text-center text-xs font-medium text-slate-600">
           {["일", "월", "화", "수", "목", "금", "토"].map((day) => (
             <div key={day} className="px-2 py-2">{day}</div>
           ))}
@@ -2157,8 +2157,8 @@ function OperationsCalendar({
           {days.map((day) => (
             <button
               key={day.key}
-              className={`min-h-[128px] border-b border-r border-slate-200 p-2 text-left last:border-r-0 ${
-                day.inMonth ? "bg-white" : "bg-slate-50 text-slate-500"
+              className={`min-h-[128px] border-b border-r border-[#d5dae1] p-2 text-left last:border-r-0 ${
+                day.inMonth ? "bg-white" : "bg-slate-50 text-slate-600"
               } ${selectedDateKey === day.key ? "ring-2 ring-inset ring-[#0f766e]" : ""}`}
               onClick={() => onSelectedDateChange(day.key)}
             >
@@ -2170,7 +2170,7 @@ function OperationsCalendar({
                 >
                   {day.label}
                 </span>
-                {day.jobs.length ? <span className="text-xs text-slate-500">{day.jobs.length}건</span> : null}
+                {day.jobs.length ? <span className="text-xs text-slate-600">{day.jobs.length}건</span> : null}
               </div>
               <div className="space-y-1">
                 {day.jobs.slice(0, 3).map((job) => (
@@ -2194,7 +2194,7 @@ function OperationsCalendar({
         </div>
 
         <aside className="space-y-4">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="rounded-lg border border-[#d5dae1] bg-slate-50 p-4">
             <h3 className="font-semibold">월간 현황</h3>
             <div className="mt-4 grid gap-3">
               <CalendarStat label="저장 작업" value={monthJobs.length} />
@@ -2203,7 +2203,7 @@ function OperationsCalendar({
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="rounded-lg border border-[#d5dae1] bg-white p-4">
             <h3 className="font-semibold">{selectedDateKey || "선택 날짜"} 기록</h3>
             <div className="mt-3 space-y-2">
               {selectedJobs.length ? (
@@ -2218,7 +2218,7 @@ function OperationsCalendar({
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="rounded-lg border border-[#d5dae1] bg-white p-4">
             <h3 className="font-semibold">최근 기록</h3>
             <div className="mt-3 max-h-[360px] space-y-2 overflow-auto">
               {recentJobs.length ? (
@@ -2254,13 +2254,13 @@ function CalendarRecord({
 
   return (
     <button
-      className="w-full rounded-md border border-slate-200 bg-slate-50 p-3 text-left hover:border-[#0f766e] hover:bg-teal-50"
+      className="w-full rounded-md border border-[#d5dae1] bg-slate-50 p-3 text-left hover:border-[#0f766e] hover:bg-teal-50"
       onClick={() => onOpenJob(job.id)}
     >
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0">
           <span className="block truncate text-sm font-medium">{job.filename}</span>
-          <span className="mt-1 block text-xs text-slate-500">
+          <span className="mt-1 block text-xs text-slate-600">
             {time} · {job.sourceSystem || "미지정"} · {job.totalRows}건 · {workerLabel(job)}
             {!compact ? ` · 완료 ${job.readyRows} · 실패 ${job.failedRows}` : ""}
           </span>
@@ -2273,7 +2273,7 @@ function CalendarRecord({
 
 function CalendarStat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2">
+    <div className="flex items-center justify-between rounded-md border border-[#d5dae1] bg-white px-3 py-2">
       <span className="text-sm text-slate-600">{label}</span>
       <strong className="text-lg">{value.toLocaleString()}</strong>
     </div>
@@ -2282,14 +2282,14 @@ function CalendarStat({ label, value }: { label: string; value: number }) {
 
 function ChannelsPage() {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="rounded-lg border border-[#d5dae1] bg-white">
       <SectionHeader
         icon={<Building2 className="h-5 w-5" />}
         title="채널/ERP 관리"
         text="주문을 받을 사이트와 ERP를 등록하고, 채널별 실행 정책을 관리합니다."
       />
       <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="overflow-hidden rounded-md border border-slate-200">
+        <div className="overflow-hidden rounded-md border border-[#d5dae1]">
           <Table>
             <TableHeader>
               <TableRow>
@@ -2304,7 +2304,7 @@ function ChannelsPage() {
                 <TableRow key={channel.name}>
                   <TableCell className="font-medium">{channel.name}</TableCell>
                   <TableCell>{channel.type}</TableCell>
-                  <TableCell><Badge className="border-slate-200 bg-slate-50 text-slate-700">{channel.status}</Badge></TableCell>
+                  <TableCell><Badge className="border-[#d5dae1] bg-slate-50 text-slate-700">{channel.status}</Badge></TableCell>
                   <TableCell className="whitespace-normal">{channel.rule}</TableCell>
                 </TableRow>
               ))}
@@ -2322,14 +2322,14 @@ function ChannelsPage() {
 
 function MappingPage() {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="rounded-lg border border-[#d5dae1] bg-white">
       <SectionHeader
         icon={<MapIcon className="h-5 w-5" />}
         title="상품·거래처 매핑"
         text="사이트마다 다른 상품명, ERP 품목코드, 거래처명을 내부 기준으로 맞춥니다."
       />
       <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="overflow-hidden rounded-md border border-slate-200">
+        <div className="overflow-hidden rounded-md border border-[#d5dae1]">
           <Table>
             <TableHeader>
               <TableRow>
@@ -2369,7 +2369,7 @@ function ExceptionsPage({ jobs, onOpenJob }: { jobs: Job[]; onOpenJob: (id: stri
     (job.report?.failedRows ?? 0) > 0 || (job.report?.holdRows ?? 0) > 0 || job.report?.details.some(detail => detail.submissionState === "UNKNOWN"));
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="rounded-lg border border-[#d5dae1] bg-white">
       <SectionHeader
         icon={<FileWarning className="h-5 w-5" />}
         title="예외 처리"
@@ -2381,7 +2381,7 @@ function ExceptionsPage({ jobs, onOpenJob }: { jobs: Job[]; onOpenJob: (id: stri
             {exceptions.map((job) => (
               <button
                 key={job.id}
-                className="rounded-md border border-slate-200 bg-slate-50 p-3 text-left hover:border-[#0f766e] hover:bg-teal-50"
+                className="rounded-md border border-[#d5dae1] bg-slate-50 p-3 text-left hover:border-[#0f766e] hover:bg-teal-50"
                 onClick={() => onOpenJob(job.id)}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2405,7 +2405,7 @@ function ExceptionsPage({ jobs, onOpenJob }: { jobs: Job[]; onOpenJob: (id: stri
 
 function RunsPage() {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="rounded-lg border border-[#d5dae1] bg-white">
       <SectionHeader
         icon={<History className="h-5 w-5" />}
         title="실행 기록"
@@ -2414,8 +2414,8 @@ function RunsPage() {
       <div className="p-4">
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
           {runSteps.map((step, index) => (
-            <div key={step} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <span className="text-xs text-slate-500">STEP {index + 1}</span>
+            <div key={step} className="rounded-lg border border-[#d5dae1] bg-slate-50 p-4">
+              <span className="text-xs text-slate-600">STEP {index + 1}</span>
               <h3 className="mt-1 font-semibold">{step}</h3>
               <p className="mt-2 text-sm text-slate-600">
                 {index < 4 ? "작업자와 자동 검증 기록" : index === 5 ? "사용자 승인 필요" : "결과와 담당자 기록"}
@@ -2434,7 +2434,7 @@ function ReportsPage({ jobs }: { jobs: Job[] }) {
   const readyRows = jobs.reduce((sum, job) => sum + job.readyRows, 0);
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="rounded-lg border border-[#d5dae1] bg-white">
       <SectionHeader
         icon={<Database className="h-5 w-5" />}
         title="리포트"
@@ -2445,7 +2445,7 @@ function ReportsPage({ jobs }: { jobs: Job[] }) {
         <OverviewCard label="검증 완료 행" value={readyRows} />
         <OverviewCard label="실패 행" value={failedRows} />
       </div>
-      <div className="border-t border-slate-200 p-4">
+      <div className="border-t border-[#d5dae1] p-4">
         <EmptyPanel title="다운로드 리포트 영역" text="작업 상세의 리포트 다운로드와 별도로, 기간·채널·실패 사유별 리포트를 이곳에 추가합니다." />
       </div>
     </section>
@@ -2454,7 +2454,7 @@ function ReportsPage({ jobs }: { jobs: Job[] }) {
 
 function MembershipPage() {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="rounded-lg border border-[#d5dae1] bg-white">
       <SectionHeader
         icon={<UserRound className="h-5 w-5" />}
         title="회원가입과 로그인"
@@ -2468,7 +2468,7 @@ function MembershipPage() {
             <PolicyCard title="작업 감사" text="업로드, 상태 변경, 승인, 주문 제출, 권한 변경은 사용자와 시간 기준으로 기록합니다." />
           </div>
 
-          <div className="overflow-hidden rounded-md border border-slate-200">
+          <div className="overflow-hidden rounded-md border border-[#d5dae1]">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -2491,7 +2491,7 @@ function MembershipPage() {
             </Table>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="rounded-lg border border-[#d5dae1] bg-slate-50 p-4">
             <div className="flex items-center gap-2">
               <ShieldCheck className="h-5 w-5 text-teal-700" />
               <h3 className="font-semibold">주문 실행 권한 기준</h3>
@@ -2504,7 +2504,7 @@ function MembershipPage() {
         </div>
 
         <aside className="space-y-4">
-          <div className="rounded-lg border border-slate-200 bg-[#fff8e6] p-4">
+          <div className="rounded-lg border border-[#d5dae1] bg-[#fff8e6] p-4">
             <div className="flex items-center gap-2">
               <KeyRound className="h-5 w-5 text-amber-700" />
               <h3 className="font-semibold">현재 상태</h3>
@@ -2513,11 +2513,11 @@ function MembershipPage() {
               지금 배포된 사이트는 GPT 계정 기반의 비공개 접근으로 보호됩니다. 별도 회원가입은 아직 실제 로그인 서버와 연결되지 않은 설계 단계입니다.
             </p>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="rounded-lg border border-[#d5dae1] bg-white p-4">
             <h3 className="font-semibold">구현 순서</h3>
             <div className="mt-3 space-y-2">
               {authRoadmap.map((item) => (
-                <div key={item.title} className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div key={item.title} className="rounded-md border border-[#d5dae1] bg-slate-50 p-3">
                   <span className="text-xs font-semibold text-teal-700">{item.title}</span>
                   <p className="mt-1 text-sm leading-6 text-slate-600">{item.text}</p>
                 </div>
@@ -2536,7 +2536,7 @@ function MembershipPage() {
 
 function SettingsPage() {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
+    <section className="rounded-lg border border-[#d5dae1] bg-white">
       <SectionHeader
         icon={<Settings className="h-5 w-5" />}
         title="관리자 설정"
@@ -2551,8 +2551,8 @@ function SettingsPage() {
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-4">
-            <div className="overflow-hidden rounded-lg border border-slate-200">
-              <div className="border-b border-slate-200 bg-slate-50 p-4">
+            <div className="overflow-hidden rounded-lg border border-[#d5dae1]">
+              <div className="border-b border-[#d5dae1] bg-slate-50 p-4">
                 <h3 className="font-semibold">회원 승인 대기</h3>
                 <p className="mt-1 text-sm text-slate-600">가입 요청자는 관리자가 역할을 지정해야 주문 화면에 접근합니다.</p>
               </div>
@@ -2582,8 +2582,8 @@ function SettingsPage() {
               </Table>
             </div>
 
-            <div className="overflow-hidden rounded-lg border border-slate-200">
-              <div className="border-b border-slate-200 bg-slate-50 p-4">
+            <div className="overflow-hidden rounded-lg border border-[#d5dae1]">
+              <div className="border-b border-[#d5dae1] bg-slate-50 p-4">
                 <h3 className="font-semibold">승인 정책</h3>
                 <p className="mt-1 text-sm text-slate-600">외부 사이트나 ERP에 실제 변경이 생기는 작업은 승인 단계를 둡니다.</p>
               </div>
@@ -2619,7 +2619,7 @@ function SettingsPage() {
               title="관리자만 바꾸는 값"
               items={["회원 승인과 차단", "역할별 권한", "채널 로그인 정책", "상품·거래처 매핑 기준", "가격 차이 허용 범위", "주문 제출 승인 단계"]}
             />
-            <div className="rounded-lg border border-slate-200 bg-[#fff8e6] p-4">
+            <div className="rounded-lg border border-[#d5dae1] bg-[#fff8e6] p-4">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="h-5 w-5 text-amber-700" />
                 <h3 className="font-semibold">운영 원칙</h3>
@@ -2628,12 +2628,12 @@ function SettingsPage() {
                 관리자가 설정을 바꾸면 설정 변경자와 시간이 기록되어야 합니다. 주문 작업 로그와 같은 기준으로 남겨야 나중에 문제가 생겨도 추적할 수 있습니다.
               </p>
             </div>
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="rounded-lg border border-[#d5dae1] bg-white p-4">
               <h3 className="font-semibold">다음 구현</h3>
               <div className="mt-3 space-y-2 text-sm text-slate-600">
-                <p className="rounded-md border border-slate-200 bg-slate-50 p-3">회원 승인 버튼과 역할 변경 저장</p>
-                <p className="rounded-md border border-slate-200 bg-slate-50 p-3">채널별 로그인 정보 보관 방식 결정</p>
-                <p className="rounded-md border border-slate-200 bg-slate-50 p-3">상품 매핑 DB와 변경 이력 연결</p>
+                <p className="rounded-md border border-[#d5dae1] bg-slate-50 p-3">회원 승인 버튼과 역할 변경 저장</p>
+                <p className="rounded-md border border-[#d5dae1] bg-slate-50 p-3">채널별 로그인 정보 보관 방식 결정</p>
+                <p className="rounded-md border border-[#d5dae1] bg-slate-50 p-3">상품 매핑 DB와 변경 이력 연결</p>
               </div>
             </div>
           </aside>
@@ -2645,7 +2645,7 @@ function SettingsPage() {
 
 function SectionHeader({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
   return (
-    <div className="flex items-center gap-3 border-b border-slate-200 p-4">
+    <div className="flex items-center gap-3 border-b border-[#d5dae1] p-4">
       <span className="flex h-10 w-10 items-center justify-center rounded-md bg-teal-50 text-teal-700">{icon}</span>
       <div>
         <h2 className="text-lg font-semibold">{title}</h2>
@@ -2657,7 +2657,7 @@ function SectionHeader({ icon, title, text }: { icon: React.ReactNode; title: st
 
 function SideNote({ title, items }: { title: string; items: string[] }) {
   return (
-    <aside className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+    <aside className="rounded-lg border border-[#d5dae1] bg-slate-50 p-4">
       <h3 className="font-semibold">{title}</h3>
       <ul className="mt-3 space-y-2 text-sm text-slate-600">
         {items.map((item) => (
@@ -2682,7 +2682,7 @@ function EmptyPanel({ title, text }: { title: string; text: string }) {
 
 function OrderTable({ rows }: { rows: OrderRow[] }) {
   return (
-    <div className="overflow-hidden rounded-md border border-slate-200">
+    <div className="overflow-hidden rounded-md border border-[#d5dae1]">
       <Table>
         <TableHeader>
           <TableRow>
@@ -2709,13 +2709,13 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
               <TableCell className="max-w-[220px] whitespace-normal font-medium">
                 {row.productName || "-"}
                 {row.option ? <div className="text-xs font-normal text-slate-700">옵션: {row.option}</div> : null}
-                <div className="text-xs font-normal text-slate-500">{row.category}</div>
+                <div className="text-xs font-normal text-slate-600">{row.category}</div>
               </TableCell>
               <TableCell>{row.quantity || "-"}</TableCell>
               <TableCell>
                 {row.centerOrder ? `센터 발주(수취인: ${row.recipientName || "미확정"})` : row.recipientName || "-"}
-                {row.centerOrder ? <div className="text-xs text-slate-500">{row.centerOrderEvidence?.join(" · ")}</div> : null}
-                <div className="text-xs text-slate-500">{row.recipientPhone}</div>
+                {row.centerOrder ? <div className="text-xs text-slate-600">{row.centerOrderEvidence?.join(" · ")}</div> : null}
+                <div className="text-xs text-slate-600">{row.recipientPhone}</div>
               </TableCell>
               <TableCell className="max-w-[260px] whitespace-normal">
                 {row.address} {row.addressDetail}
@@ -2733,31 +2733,31 @@ function OrderTable({ rows }: { rows: OrderRow[] }) {
 
 function OrderRowCard({ row }: { row: OrderRow }) {
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-4">
+    <article className="rounded-xl border border-[#d5dae1] bg-white p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs text-slate-500">{row.sourceSystem} · 원본 {row.lineNo}행</p>
+          <p className="text-xs text-slate-600">{row.sourceSystem} · 원본 {row.lineNo}행</p>
           <h3 className="mt-2 font-semibold">{row.productName}</h3>
-          {row.option ? <p className="mt-1 text-sm text-slate-500">{row.option}</p> : null}
+          {row.option ? <p className="mt-1 text-sm text-slate-600">{row.option}</p> : null}
         </div>
         <Badge className={statusClass(row.status)}>{statusLabel(row.status)}</Badge>
       </div>
       <dl className="mt-4 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-3 border-t border-slate-100 pt-4 text-sm">
-        <dt className="text-slate-500">원주문번호</dt>
+        <dt className="text-slate-600">원주문번호</dt>
         <dd className="break-all">{row.orderId || "-"}</dd>
-        <dt className="text-slate-500">수량</dt>
+        <dt className="text-slate-600">수량</dt>
         <dd>{row.quantity}개</dd>
-        <dt className="text-slate-500">수취인</dt>
+        <dt className="text-slate-600">수취인</dt>
         <dd>
           {row.centerOrder ? `센터 발주(수취인: ${row.recipientName || "미확정"})` : row.recipientName || "-"}
-          {row.centerOrder ? <span className="mt-1 block text-xs text-slate-500">{row.centerOrderEvidence?.join(" · ")}</span> : null}
-          <span className="mt-1 block text-xs text-slate-500">{row.recipientPhone}</span>
+          {row.centerOrder ? <span className="mt-1 block text-xs text-slate-600">{row.centerOrderEvidence?.join(" · ")}</span> : null}
+          <span className="mt-1 block text-xs text-slate-600">{row.recipientPhone}</span>
         </dd>
-        <dt className="text-slate-500">배송지</dt>
+        <dt className="text-slate-600">배송지</dt>
         <dd className="break-words leading-6">{row.address} {row.addressDetail}</dd>
-        <dt className="text-slate-500">배송 메모</dt>
+        <dt className="text-slate-600">배송 메모</dt>
         <dd className="break-words">{row.memo || "-"}</dd>
-        {row.reason ? <><dt className="text-slate-500">검증 사유</dt><dd className="leading-6">{row.reason}</dd></> : null}
+        {row.reason ? <><dt className="text-slate-600">검증 사유</dt><dd className="leading-6">{row.reason}</dd></> : null}
       </dl>
     </article>
   );
@@ -2824,7 +2824,7 @@ function OrderRowsPanel({ rows }: { rows: OrderRow[] }) {
 function EmptyState() {
   return (
     <div className="flex min-h-[360px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-      <FileSpreadsheet className="mb-3 h-10 w-10 text-slate-500" />
+      <FileSpreadsheet className="mb-3 h-10 w-10 text-slate-600" />
       <h3 className="font-semibold">주문 엑셀을 업로드하세요</h3>
       <p className="mt-2 max-w-xl text-sm text-slate-600">
         THKC 발주서(.xlsx)를 그대로 올릴 수 있습니다. 일반 주문 엑셀은 order_id, category,
@@ -2856,7 +2856,7 @@ function MetricCard({
     failed: "bg-rose-50 text-rose-700",
   };
   return (
-    <div className="rounded-2xl border border-slate-200/70 bg-white p-5">
+    <div className="rounded-2xl border border-[#d5dae1]/70 bg-white p-5">
       <div className="flex items-center justify-between">
         <span className="text-sm text-slate-600">{label}</span>
         <span className={`flex h-10 w-10 items-center justify-center rounded-xl [&>svg]:h-5 [&>svg]:w-5 ${colors[tone]}`}>{icon}</span>
@@ -2868,7 +2868,7 @@ function MetricCard({
 
 function PolicyCard({ title, text }: { title: string; text: string }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+    <div className="rounded-lg border border-[#d5dae1] bg-slate-50 p-4">
       <h3 className="font-semibold">{title}</h3>
       <p className="mt-2 text-sm leading-6 text-slate-600">{text}</p>
     </div>

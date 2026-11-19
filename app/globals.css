@@ -41,7 +41,7 @@
 }
 
 :root {
-  --background: #f2f4f6;
+  --background: #e9ecf1;
   --foreground: #0f172a;
   --card: #ffffff;
   --card-foreground: #171717;
@@ -56,8 +56,8 @@
   --accent: #e0ebff;
   --accent-foreground: #1e40af;
   --destructive: #e7000b;
-  --border: #e5e5e5;
-  --input: #e5e5e5;
+  --border: #d5dae1;
+  --input: #d5dae1;
   --ring: #2563eb;
   --chart-1: #2563eb;
   --chart-2: #2563eb;
@@ -162,5 +162,5 @@ button,
 input,
 textarea,
 select {
-  font: inherit;
+  font-family: inherit;
 }

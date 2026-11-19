@@ -24,6 +24,8 @@ async function screen() {
     return [slots[index], value => { slots[index] = typeof value === 'function' ? value(slots[index]) : value; }];
   };
   const context = vm.createContext({ React, ExcelJS, crypto: webcrypto, ...core, ...policy, useState,
+    // 업로드와 작업 생성에 같은 시험 날짜를 써서 실행일에 따라 미래 업로드로 보류되지 않게 한다.
+    prepareCenterEntries: rows => core.prepareCenterEntries(rows, '2026-11-17T00:00:00Z'),
     useEffect: () => {}, useRef: initial => useState(() => ({ current: initial }))[0],
     Button: ({ children, ...props }) => React.createElement('button', props, children), WorkbookSheetPicker: () => null,
     listCenterQueue: async () => structuredClone(root['center-queue'] || {}),

@@ -93,11 +93,11 @@ export default function CenterOrderQueue({ jobs, onOpenJob, onChanged, compact =
     return <section aria-label="센터 발주 대기열" className="space-y-3">
       {groups.filter(group => group.alert).map(group => <div key={group.key} role="alert" className="rounded-2xl bg-amber-50 p-3 ring-1 ring-amber-300">
         <strong className="text-sm text-amber-900">센터 상품 미발주</strong>
-        <p className="my-1 text-xs text-amber-900">{group.supplier} · 오늘 {group.deadline.label} (한국시간). 해당 회차의 제조사 발주서가 없고 대기 중인 센터 상품이 있습니다.</p>
+        <p className="my-1 text-sm text-amber-900">{group.supplier} · 오늘 <span className="text-[15px] font-bold tabular-nums">{group.deadline.label}</span> (한국시간). 해당 회차의 제조사 발주서가 없고 대기 중인 센터 상품이 있습니다.</p>
         <Button size="sm" disabled={busy || !group.entries.some(entry => entry.state === 'WAITING' && entry.row.status === 'READY')} onClick={() => void makeJob(group.supplier, group.scheduleKey)}>센터 상품만 따로 주문 만들기</Button>
       </div>)}
       {message ? <p role="status" className="text-xs text-slate-700">{message}</p> : null}
-      <button type="button" onClick={onOpenQueue} disabled={!onOpenQueue} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-bold text-slate-800 hover:border-blue-300 disabled:cursor-default">센터 발주 대기열 열기<span className="block text-xs font-normal text-slate-600">대기 중인 센터 상품 {waiting}건 · 업로드·회차 확인</span></button>
+      <button type="button" onClick={onOpenQueue} disabled={!onOpenQueue} className="w-full rounded-2xl border border-[#d5dae1] bg-white px-4 py-3 text-left text-sm font-bold text-slate-800 hover:border-blue-300 disabled:cursor-default">센터 발주 대기열 열기<span className="block text-xs font-normal text-slate-600">대기 중인 센터 상품 {waiting}건 · 업로드·회차 확인</span></button>
     </section>;
   }
   return <section aria-label="센터 발주 대기열" className="space-y-5">
@@ -122,7 +122,7 @@ export default function CenterOrderQueue({ jobs, onOpenJob, onChanged, compact =
     {uploads.length ? <Button disabled={busy || uploads.some(file => file.error || !file.rows.length)} onClick={() => void save()}>센터 대기열에 저장</Button> : null}
     {!groups.length ? <p className="rounded-2xl border bg-white p-5 text-sm">센터 발주 대기열이 비어 있습니다.</p> : null}
     {groups.map(group => <article key={group.key} className="overflow-hidden rounded-2xl border bg-white">
-      <div className="p-5"><h3 className="font-semibold">{group.supplier}</h3><p className="mt-2 text-sm">오늘 {group.deadline.label} (한국시간)</p>
+      <div className="p-5"><h3 className="font-semibold">{group.supplier}</h3><p className="mt-2 text-sm">오늘 <span className="text-[15px] font-bold tabular-nums">{group.deadline.label}</span> (한국시간)</p>
         {group.alert ? <div role="alert" className="mt-3 rounded-lg bg-amber-50 p-3"><strong>센터 상품 미발주</strong><p className="my-2 text-sm">해당 회차의 업체 발주마감 30분 전입니다. 오늘 해당 회차의 제조사 발주서가 없고 대기 중인 센터 상품이 있습니다. 검증 보류 행은 수정본을 올려 주세요.</p><Button disabled={busy || !group.entries.some(entry => entry.state === 'WAITING' && entry.row.status === 'READY')} onClick={() => void makeJob(group.supplier, group.scheduleKey)}>센터 상품만 따로 주문 만들기</Button></div> : null}
         {!group.alert && group.deadline.channel && group.entries.some(entry => entry.state === 'WAITING' && entry.row.status === 'READY') ? <Button className="mt-3" variant="outline" disabled={busy} onClick={() => void makeJob(group.supplier, group.scheduleKey)}>센터 상품만 따로 주문 만들기</Button> : null}
       </div>
